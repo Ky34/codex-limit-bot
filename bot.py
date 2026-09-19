@@ -21,6 +21,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 LIMITS = {300: "Пятичасовой", 10080: "Недельный"}
 LIMIT_ICONS = {300: "⏱️", 10080: "📅"}
+MONTHS = (
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+)
 THRESHOLDS = (20, 10, 5)
 THRESHOLDS_VERSION = 2
 try:
@@ -143,13 +147,12 @@ def remaining_percent(window: dict) -> float:
     return max(0.0, min(100.0, 100.0 - float(window["usedPercent"])))
 
 
-def limit_line(duration: int, window: dict, reset_notice: bool = False) -> str:
+def limit_line(duration: int, window: dict) -> str:
     reset_time = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW).strftime(
         "%d.%m.%Y в %H:%M МСК"
     )
-    event = " сброшен" if reset_notice else ""
     return (
-        f"<b>{LIMITS[duration]} лимит Codex</b>{event} — осталось "
+        f"<b>{LIMITS[duration]} лимит Codex</b> — осталось "
         f"<b>{format_percent(remaining_percent(window))}%</b>.\n"
         f"Обновление: {reset_time}."
     )
@@ -173,11 +176,23 @@ def format_threshold_alert(duration: int, windows: dict[int, dict]) -> str:
 
 
 def format_reset_alert(duration: int, windows: dict[int, dict]) -> str:
-    first = limit_line(duration, windows[duration], reset_notice=True)
+    def block(limit_duration: int, next_update: bool) -> str:
+        window = windows[limit_duration]
+        reset = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW)
+        date = f"{reset.day} {MONTHS[reset.month - 1]}, {reset:%H:%M}"
+        label = "Следующее обновление" if next_update else "Обновление"
+        return (
+            f"{LIMIT_ICONS[limit_duration]} <b>{LIMITS[limit_duration]} лимит</b>\n\n"
+            f"Осталось: <b>{format_percent(remaining_percent(window))}%</b>\n"
+            f"{label}: {date}"
+        )
+
     other_duration = next(candidate for candidate in LIMITS if candidate != duration)
     return (
-        f"🔄 {LIMIT_ICONS[duration]} {first}\n\n"
-        f"{LIMIT_ICONS[other_duration]} {limit_line(other_duration, windows[other_duration])}"
+        f"🔄 <b>{LIMITS[duration]} лимит обновлён!</b>\n\n"
+        f"{block(duration, True)}\n\n"
+        f"────────────────────\n\n"
+        f"{block(other_duration, False)}"
     )
 
 

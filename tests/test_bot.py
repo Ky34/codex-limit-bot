@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 import bot
@@ -43,9 +44,11 @@ class NotificationTests(unittest.TestCase):
             windows(five_hour_remaining=100, five_hour_reset=4000), old, now=2001
         )
         self.assertEqual(len(events), 1)
-        self.assertIn("🔄 ⏱️ <b>Пятичасовой лимит Codex</b> сброшен", events[0][0])
-        self.assertIn("📅 <b>Недельный лимит Codex</b> — осталось <b>60%</b>", events[0][0])
-        self.assertEqual(events[0][0].count("Пятичасовой лимит Codex"), 1)
+        self.assertIn("🔄 <b>Пятичасовой лимит обновлён!</b>", events[0][0])
+        self.assertIn("⏱️ <b>Пятичасовой лимит</b>\n\nОсталось: <b>100%</b>", events[0][0])
+        self.assertIn("Следующее обновление:", events[0][0])
+        self.assertIn("────────────────────", events[0][0])
+        self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>60%</b>", events[0][0])
         events, _ = bot.notifications(
             windows(five_hour_remaining=100, five_hour_reset=4000), state, now=2002
         )
@@ -56,11 +59,16 @@ class NotificationTests(unittest.TestCase):
         current = windows(weekly_remaining=100, weekly_reset=12000)
         events, state = bot.notifications(current, old, now=9001)
         self.assertEqual(len(events), 1)
-        self.assertIn("🔄 📅 <b>Недельный лимит Codex</b> сброшен", events[0][0])
-        self.assertIn("⏱️ <b>Пятичасовой лимит Codex</b> — осталось <b>50%</b>", events[0][0])
-        self.assertEqual(events[0][0].count("Недельный лимит Codex"), 1)
+        self.assertIn("🔄 <b>Недельный лимит обновлён!</b>", events[0][0])
+        self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>100%</b>", events[0][0])
+        self.assertIn("⏱️ <b>Пятичасовой лимит</b>\n\nОсталось: <b>50%</b>", events[0][0])
         events, _ = bot.notifications(current, state, now=9002)
         self.assertEqual(events, [])
+
+    def test_reset_date_uses_russian_month(self):
+        reset = int(datetime(2026, 9, 20, 5, 30, tzinfo=bot.MOSCOW).timestamp())
+        message = bot.format_reset_alert(300, windows(five_hour_reset=reset))
+        self.assertIn("Следующее обновление: 20 сентября, 05:30", message)
 
     def test_existing_10_percent_alert_does_not_hide_new_5_percent_alert(self):
         old = {"300": {"resetsAt": 2000, "level": 3}}

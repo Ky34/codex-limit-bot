@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+IMG_4782.png
+.env
+*.env
+auth.json
+state.json

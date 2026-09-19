@@ -131,13 +131,7 @@ def codex_windows(response: dict) -> dict[int, dict]:
 
 
 def severity(remaining: float) -> int:
-    if remaining <= 5:
-        return 3
-    if remaining <= 10:
-        return 2
-    if remaining <= 20:
-        return 1
-    return 0
+    return sum(remaining <= threshold for threshold in THRESHOLDS)
 
 
 def format_percent(value: float) -> str:
@@ -148,11 +142,15 @@ def remaining_percent(window: dict) -> float:
     return max(0.0, min(100.0, 100.0 - float(window["usedPercent"])))
 
 
-def limit_line(duration: int, window: dict) -> str:
-    reset = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW).strftime(
+def limit_line(duration: int, window: dict, reset_notice: bool = False) -> str:
+    reset_time = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW).strftime(
         "%d.%m.%Y в %H:%M МСК"
     )
-    return f"{LIMITS[duration]}: осталось {format_percent(remaining_percent(window))}%. Сброс: {reset}."
+    event = " сброшен" if reset_notice else ""
+    return (
+        f"{LIMITS[duration]} лимит Codex{event} — осталось {format_percent(remaining_percent(window))}%.\n"
+        f"Обновление: {reset_time}."
+    )
 
 
 def other_limit_line(duration: int, windows: dict[int, dict]) -> str:
@@ -166,23 +164,14 @@ def format_status(windows: dict[int, dict]) -> str:
     )
 
 
-def format_threshold_alert(duration: int, crossed: tuple[int, ...], windows: dict[int, dict]) -> str:
-    threshold_text = ", ".join(f"{value}%" for value in crossed)
-    verb = "пройден порог" if len(crossed) == 1 else "пройдены пороги"
+def format_threshold_alert(duration: int, windows: dict[int, dict]) -> str:
     icon = {1: "⚠️", 2: "🟠", 3: "🔴"}[severity(remaining_percent(windows[duration]))]
-    return (
-        f"{icon} {LIMITS[duration]} лимит Codex: {verb} {threshold_text}.\n"
-        f"{limit_line(duration, windows[duration])}\n"
-        f"Другой лимит — {other_limit_line(duration, windows)}"
-    )
+    return f"{icon} {limit_line(duration, windows[duration])}\n\n{other_limit_line(duration, windows)}"
 
 
 def format_reset_alert(duration: int, windows: dict[int, dict]) -> str:
-    return (
-        f"🔄 {LIMITS[duration]} лимит Codex сброшен.\n"
-        f"{limit_line(duration, windows[duration])}\n"
-        f"Другой лимит — {other_limit_line(duration, windows)}"
-    )
+    first = limit_line(duration, windows[duration], reset_notice=True)
+    return f"🔄 {first}\n\n{other_limit_line(duration, windows)}"
 
 
 def migrate_state(state: dict) -> dict:
@@ -223,9 +212,8 @@ def notifications(
 
         level = severity(remaining_percent(window))
         if level > previous_level:
-            crossed = THRESHOLDS[previous_level:level]
             updated[key] = {"resetsAt": resets_at, "level": level, "usedPercent": used}
-            pending.append((format_threshold_alert(duration, crossed, windows), dict(updated)))
+            pending.append((format_threshold_alert(duration, windows), dict(updated)))
         else:
             updated[key] = {
                 "resetsAt": resets_at,

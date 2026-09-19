@@ -173,7 +173,11 @@ def format_threshold_alert(duration: int, windows: dict[int, dict]) -> str:
 
 def format_reset_alert(duration: int, windows: dict[int, dict]) -> str:
     first = limit_line(duration, windows[duration], reset_notice=True)
-    return f"🔄 {first}\n\n{other_limit_line(duration, windows)}"
+    other_duration = next(candidate for candidate in LIMITS if candidate != duration)
+    return (
+        f"🔄 {LIMIT_ICONS[duration]} {first}\n\n"
+        f"{LIMIT_ICONS[other_duration]} {limit_line(other_duration, windows[other_duration])}"
+    )
 
 
 def migrate_state(state: dict) -> dict:

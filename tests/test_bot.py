@@ -43,12 +43,23 @@ class NotificationTests(unittest.TestCase):
             windows(five_hour_remaining=100, five_hour_reset=4000), old, now=2001
         )
         self.assertEqual(len(events), 1)
-        self.assertIn("лимит Codex сброшен", events[0][0])
-        self.assertIn("Недельный лимит Codex — осталось 60%", events[0][0])
+        self.assertIn("🔄 ⏱️ Пятичасовой лимит Codex сброшен", events[0][0])
+        self.assertIn("📅 Недельный лимит Codex — осталось 60%", events[0][0])
         self.assertEqual(events[0][0].count("Пятичасовой лимит Codex"), 1)
         events, _ = bot.notifications(
             windows(five_hour_remaining=100, five_hour_reset=4000), state, now=2002
         )
+        self.assertEqual(events, [])
+
+    def test_weekly_reset_alert_and_new_period(self):
+        old = {"_thresholds_version": 2, "10080": {"resetsAt": 9000, "level": 2, "usedPercent": 92}}
+        current = windows(weekly_remaining=100, weekly_reset=12000)
+        events, state = bot.notifications(current, old, now=9001)
+        self.assertEqual(len(events), 1)
+        self.assertIn("🔄 📅 Недельный лимит Codex сброшен", events[0][0])
+        self.assertIn("⏱️ Пятичасовой лимит Codex — осталось 50%", events[0][0])
+        self.assertEqual(events[0][0].count("Недельный лимит Codex"), 1)
+        events, _ = bot.notifications(current, state, now=9002)
         self.assertEqual(events, [])
 
     def test_existing_10_percent_alert_does_not_hide_new_5_percent_alert(self):

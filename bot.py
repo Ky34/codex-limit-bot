@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 LIMITS = {300: "Пятичасовой", 10080: "Недельный"}
+LIMIT_ICONS = {300: "⏱️", 10080: "📅"}
 THRESHOLDS = (20, 10, 5)
 THRESHOLDS_VERSION = 2
 try:
@@ -159,8 +160,9 @@ def other_limit_line(duration: int, windows: dict[int, dict]) -> str:
 
 
 def format_status(windows: dict[int, dict]) -> str:
-    return "📊 Лимиты Codex сейчас:\n" + "\n".join(
-        limit_line(duration, windows[duration]) for duration in LIMITS
+    return "📊 Лимиты Codex сейчас:\n\n" + "\n\n".join(
+        f"{LIMIT_ICONS[duration]} {limit_line(duration, windows[duration])}"
+        for duration in LIMITS
     )
 
 

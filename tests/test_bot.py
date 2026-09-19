@@ -74,8 +74,9 @@ class CommandTests(unittest.TestCase):
             {"message": {"chat": {"id": 123}, "text": "/limits"}}, "token", "123", "codex", "limits"
         )
         reply = telegram.call_args.args[2]["text"]
-        self.assertIn("Пятичасовой лимит Codex — осталось 25%", reply)
-        self.assertIn("Недельный лимит Codex — осталось 60%", reply)
+        self.assertIn("⏱️ Пятичасовой лимит Codex — осталось 25%", reply)
+        self.assertIn("📅 Недельный лимит Codex — осталось 60%", reply)
+        self.assertIn("МСК.\n\n📅 Недельный", reply)
 
     @patch("bot.telegram_request")
     @patch("bot.read_rate_limits")

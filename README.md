@@ -4,7 +4,7 @@
 
 На VPS программа размещена в `/opt/codex-limit-bot`, запускается отдельным пользователем `codexbot`. Таймер `codex-limit-bot.timer` проверяет лимиты раз в десять минут. Сервис `codex-limit-bot-listener.service` принимает команды Telegram. Секреты не входят в репозиторий: вход Codex хранится в закрытом каталоге пользователя `codexbot`, токен Telegram и chat ID — в `/etc/codex-limit-bot.env` с правами `0600`.
 
-Бот [@Ky3aLimitsbot](https://t.me/Ky3aLimitsbot) подключён к личному чату. Временная команда `/limits` запрашивает текущие остатки и время сброса обоих лимитов. Её можно заменить через `TELEGRAM_STATUS_COMMAND` в `/etc/codex-limit-bot.env` без изменения кода. Бот отвечает только в настроенном чате. Для проверки состояния: `systemctl status codex-limit-bot.timer codex-limit-bot-listener.service`. Для разовой проверки: `systemctl start codex-limit-bot.service`.
+Бот [@Ky3aLimitsbot](https://t.me/Ky3aLimitsbot) подключён к личному чату. Временная команда `/limits` запрашивает текущие остатки и время сброса обоих лимитов; в ответе пятичасовой лимит помечен ⏱️, недельный — 📅, блоки разделены пустой строкой. Команду можно заменить через `TELEGRAM_STATUS_COMMAND` в `/etc/codex-limit-bot.env` без изменения кода. Бот отвечает только в настроенном чате. Для проверки состояния: `systemctl status codex-limit-bot.timer codex-limit-bot-listener.service`. Для разовой проверки: `systemctl start codex-limit-bot.service`.
 
 При потере доступа к лимитам бот отправляет одно предупреждение и сообщение о восстановлении после следующей успешной проверки.
 

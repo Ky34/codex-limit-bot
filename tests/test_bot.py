@@ -19,24 +19,31 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(events, [])
         events, state = bot.notifications(windows(five_hour_remaining=19), state, now=1000)
         self.assertEqual(len(events), 1)
-        self.assertIn("⚠️ <b>Пятичасовой лимит Codex</b> — осталось <b>19%</b>", events[0][0])
-        self.assertIn("<b>Недельный лимит Codex</b> — осталось <b>60%</b>", events[0][0])
-        self.assertEqual(events[0][0].count("Пятичасовой лимит Codex"), 1)
+        self.assertIn("⚠️ <b>Пятичасовой лимит: порог 20% пройден!</b>", events[0][0])
+        self.assertIn("⏱️ <b>Пятичасовой лимит</b>\n\nОсталось: <b>19%</b>", events[0][0])
+        self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>60%</b>", events[0][0])
+        self.assertIn("────────────────────", events[0][0])
         self.assertNotIn("Другой лимит", events[0][0])
         events, state = bot.notifications(windows(five_hour_remaining=9), state, now=1000)
         self.assertEqual(len(events), 1)
-        self.assertIn("🟠 <b>Пятичасовой лимит Codex</b> — осталось <b>9%</b>", events[0][0])
+        self.assertIn("🟠 <b>Пятичасовой лимит: порог 10% пройден!</b>", events[0][0])
+        self.assertIn("Осталось: <b>9%</b>", events[0][0])
         events, state = bot.notifications(windows(five_hour_remaining=4), state, now=1000)
         self.assertEqual(len(events), 1)
-        self.assertIn("🔴 <b>Пятичасовой лимит Codex</b> — осталось <b>4%</b>", events[0][0])
+        self.assertIn("🔴 <b>Пятичасовой лимит: порог 5% пройден!</b>", events[0][0])
+        self.assertIn("Осталось: <b>4%</b>", events[0][0])
         events, _ = bot.notifications(windows(five_hour_remaining=4), state, now=1000)
         self.assertEqual(events, [])
 
     def test_skipped_thresholds_make_one_message(self):
         events, _ = bot.notifications(windows(five_hour_remaining=4), {}, now=1000)
         self.assertEqual(len(events), 1)
-        self.assertIn("🔴 <b>Пятичасовой лимит Codex</b> — осталось <b>4%</b>", events[0][0])
-        self.assertEqual(events[0][0].count("Пятичасовой лимит Codex"), 1)
+        self.assertIn("🔴 <b>Пятичасовой лимит: порог 5% пройден!</b>", events[0][0])
+        self.assertIn("Осталось: <b>4%</b>", events[0][0])
+
+    def test_exhausted_limit_has_accurate_title(self):
+        events, _ = bot.notifications(windows(five_hour_remaining=0), {}, now=1000)
+        self.assertIn("🔴 <b>Пятичасовой лимит исчерпан!</b>", events[0][0])
 
     def test_reset_alert_and_new_period(self):
         old = {"_thresholds_version": 2, "300": {"resetsAt": 2000, "level": 3, "usedPercent": 96}}
@@ -76,7 +83,8 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(events, [])
         events, _ = bot.notifications(windows(five_hour_remaining=4), state, now=1000)
         self.assertEqual(len(events), 1)
-        self.assertIn("🔴 <b>Пятичасовой лимит Codex</b> — осталось <b>4%</b>", events[0][0])
+        self.assertIn("🔴 <b>Пятичасовой лимит: порог 5% пройден!</b>", events[0][0])
+        self.assertIn("Осталось: <b>4%</b>", events[0][0])
 
 
 class CommandTests(unittest.TestCase):
@@ -93,9 +101,10 @@ class CommandTests(unittest.TestCase):
             {"message": {"chat": {"id": 123}, "text": "/limits"}}, "token", "123", "codex", "limits"
         )
         reply = telegram.call_args.args[2]["text"]
-        self.assertIn("⏱️ <b>Пятичасовой лимит Codex</b> — осталось <b>25%</b>", reply)
-        self.assertIn("📅 <b>Недельный лимит Codex</b> — осталось <b>60%</b>", reply)
-        self.assertIn("МСК.\n\n📅 <b>Недельный", reply)
+        self.assertIn("📊 <b>Лимиты Codex сейчас</b>", reply)
+        self.assertIn("⏱️ <b>Пятичасовой лимит</b>\n\nОсталось: <b>25%</b>", reply)
+        self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>60%</b>", reply)
+        self.assertIn("────────────────────", reply)
         self.assertEqual(telegram.call_args.args[2]["parse_mode"], "HTML")
 
     @patch("bot.telegram_request")

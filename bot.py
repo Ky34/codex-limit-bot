@@ -27,6 +27,7 @@ MONTHS = (
 )
 THRESHOLDS = (20, 10, 5)
 THRESHOLDS_VERSION = 2
+DIVIDER = "────────────────────"
 try:
     MOSCOW = ZoneInfo("Europe/Moscow")
 except ZoneInfoNotFoundError:
@@ -147,52 +148,50 @@ def remaining_percent(window: dict) -> float:
     return max(0.0, min(100.0, 100.0 - float(window["usedPercent"])))
 
 
-def limit_line(duration: int, window: dict) -> str:
-    reset_time = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW).strftime(
-        "%d.%m.%Y в %H:%M МСК"
-    )
+def limit_block(duration: int, window: dict, next_update: bool = False) -> str:
+    reset = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW)
+    date = f"{reset.day} {MONTHS[reset.month - 1]}, {reset:%H:%M}"
+    label = "Следующее обновление" if next_update else "Обновление"
     return (
-        f"<b>{LIMITS[duration]} лимит Codex</b> — осталось "
-        f"<b>{format_percent(remaining_percent(window))}%</b>.\n"
-        f"Обновление: {reset_time}."
+        f"{LIMIT_ICONS[duration]} <b>{LIMITS[duration]} лимит</b>\n\n"
+        f"Осталось: <b>{format_percent(remaining_percent(window))}%</b>\n"
+        f"{label}: {date}"
     )
 
 
-def other_limit_line(duration: int, windows: dict[int, dict]) -> str:
-    other_duration = next(candidate for candidate in LIMITS if candidate != duration)
-    return limit_line(other_duration, windows[other_duration])
+def other_duration(duration: int) -> int:
+    return next(candidate for candidate in LIMITS if candidate != duration)
 
 
 def format_status(windows: dict[int, dict]) -> str:
-    return "📊 Лимиты Codex сейчас:\n\n" + "\n\n".join(
-        f"{LIMIT_ICONS[duration]} {limit_line(duration, windows[duration])}"
+    return "📊 <b>Лимиты Codex сейчас</b>\n\n" + f"\n\n{DIVIDER}\n\n".join(
+        limit_block(duration, windows[duration])
         for duration in LIMITS
     )
 
 
 def format_threshold_alert(duration: int, windows: dict[int, dict]) -> str:
-    icon = {1: "⚠️", 2: "🟠", 3: "🔴"}[severity(remaining_percent(windows[duration]))]
-    return f"{icon} {limit_line(duration, windows[duration])}\n\n{other_limit_line(duration, windows)}"
+    remaining = remaining_percent(windows[duration])
+    icon = {1: "⚠️", 2: "🟠", 3: "🔴"}[severity(remaining)]
+    threshold = THRESHOLDS[severity(remaining) - 1]
+    title = "исчерпан!" if remaining == 0 else f"порог {threshold}% пройден!"
+    separator = " " if remaining == 0 else ": "
+    other = other_duration(duration)
+    return (
+        f"{icon} <b>{LIMITS[duration]} лимит{separator}{title}</b>\n\n"
+        f"{limit_block(duration, windows[duration], True)}\n\n"
+        f"{DIVIDER}\n\n"
+        f"{limit_block(other, windows[other])}"
+    )
 
 
 def format_reset_alert(duration: int, windows: dict[int, dict]) -> str:
-    def block(limit_duration: int, next_update: bool) -> str:
-        window = windows[limit_duration]
-        reset = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW)
-        date = f"{reset.day} {MONTHS[reset.month - 1]}, {reset:%H:%M}"
-        label = "Следующее обновление" if next_update else "Обновление"
-        return (
-            f"{LIMIT_ICONS[limit_duration]} <b>{LIMITS[limit_duration]} лимит</b>\n\n"
-            f"Осталось: <b>{format_percent(remaining_percent(window))}%</b>\n"
-            f"{label}: {date}"
-        )
-
-    other_duration = next(candidate for candidate in LIMITS if candidate != duration)
+    other = other_duration(duration)
     return (
         f"🔄 <b>{LIMITS[duration]} лимит обновлён!</b>\n\n"
-        f"{block(duration, True)}\n\n"
-        f"────────────────────\n\n"
-        f"{block(other_duration, False)}"
+        f"{limit_block(duration, windows[duration], True)}\n\n"
+        f"{DIVIDER}\n\n"
+        f"{limit_block(other, windows[other])}"
     )
 
 

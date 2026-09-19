@@ -149,7 +149,8 @@ def limit_line(duration: int, window: dict, reset_notice: bool = False) -> str:
     )
     event = " сброшен" if reset_notice else ""
     return (
-        f"{LIMITS[duration]} лимит Codex{event} — осталось {format_percent(remaining_percent(window))}%.\n"
+        f"<b>{LIMITS[duration]} лимит Codex</b>{event} — осталось "
+        f"<b>{format_percent(remaining_percent(window))}%</b>.\n"
         f"Обновление: {reset_time}."
     )
 
@@ -264,7 +265,9 @@ def handle_update(update: dict, token: str, chat_id: str, codex: str, status_com
         reply = format_status(windows)
     except Exception:
         reply = "⚠️ Сейчас не удалось получить лимиты Codex. Попробуйте снова позже."
-    telegram_request(token, "sendMessage", {"chat_id": chat_id, "text": reply})
+    telegram_request(
+        token, "sendMessage", {"chat_id": chat_id, "text": reply, "parse_mode": "HTML"}
+    )
 
 
 def listen_commands(
@@ -351,7 +354,9 @@ def main() -> int:
         if args.dry_run:
             print(message)
         else:
-            telegram_request(token, "sendMessage", {"chat_id": chat_id, "text": message})
+            telegram_request(
+                token, "sendMessage", {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
+            )
             save_state(args.state, snapshot)
     if not args.dry_run:
         save_state(args.state, updated)

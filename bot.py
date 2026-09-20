@@ -32,6 +32,7 @@ DIVIDER = "────────────────────"
 QUIET_START_HOUR = 2
 QUIET_END_HOUR = 10
 TIMEZONE_STATE = Path("/var/lib/codex-limit-bot/timezone.json")
+STATUS_BUTTON = "📊 Лимиты"
 try:
     MINSK = ZoneInfo("Europe/Minsk")
 except ZoneInfoNotFoundError:
@@ -302,9 +303,12 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
-def timezone_keyboard() -> str:
+def bot_keyboard() -> str:
     return json.dumps({
-        "keyboard": [[{"text": "📍 Обновить часовой пояс", "request_location": True}]],
+        "keyboard": [
+            [STATUS_BUTTON],
+            [{"text": "📍 Обновить часовой пояс", "request_location": True}],
+        ],
         "resize_keyboard": True,
         "is_persistent": True,
     }, ensure_ascii=False)
@@ -323,7 +327,7 @@ def handle_update(
             telegram_request(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": "Живая геолокация не используется. Нажмите «📍 Обновить часовой пояс», чтобы отправить геопозицию один раз.",
-                "reply_markup": timezone_keyboard(),
+                "reply_markup": bot_keyboard(),
             })
             return
         try:
@@ -342,7 +346,7 @@ def handle_update(
                 f"📍 Часовой пояс: {zone_name}.\n"
                 "Тихие часы 02:00–10:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
             ),
-            "reply_markup": timezone_keyboard(),
+            "reply_markup": bot_keyboard(),
         })
         return
     text = message.get("text", "")
@@ -350,11 +354,11 @@ def handle_update(
     if command in ("/start", "/timezone"):
         telegram_request(token, "sendMessage", {
             "chat_id": chat_id,
-            "text": "📍 Нажмите «Обновить часовой пояс», чтобы один раз отправить текущую геопозицию. Бот сохранит часовой пояс для тихих часов 02:00–10:00.",
-            "reply_markup": timezone_keyboard(),
+            "text": "Используйте кнопки «📊 Лимиты» для просмотра остатков и «📍 Обновить часовой пояс» для настройки тихих часов 02:00–10:00.",
+            "reply_markup": bot_keyboard(),
         })
         return
-    if command != f"/{status_command}":
+    if command != f"/{status_command}" and text.strip() != STATUS_BUTTON:
         return
     try:
         windows = codex_windows(read_rate_limits(codex))
@@ -362,7 +366,10 @@ def handle_update(
     except Exception:
         reply = "⚠️ Сейчас не удалось получить лимиты Codex. Попробуйте снова позже."
     telegram_request(
-        token, "sendMessage", {"chat_id": chat_id, "text": reply, "parse_mode": "HTML"}
+        token, "sendMessage", {
+            "chat_id": chat_id, "text": reply, "parse_mode": "HTML",
+            "reply_markup": bot_keyboard(),
+        }
     )
 
 

@@ -104,8 +104,27 @@ class CommandTests(unittest.TestCase):
                     "token", "123", "codex", "limits",
                 )
                 markup = json.loads(telegram.call_args.args[2]["reply_markup"])
-                self.assertTrue(markup["keyboard"][0][0]["request_location"])
+                self.assertEqual(markup["keyboard"][0], [bot.STATUS_BUTTON])
+                self.assertTrue(markup["keyboard"][1][0]["request_location"])
                 self.assertTrue(markup["is_persistent"])
+
+    @patch("bot.telegram_request")
+    @patch("bot.read_rate_limits")
+    def test_limits_button_uses_status_response(self, read_limits, telegram):
+        read_limits.return_value = {
+            "rateLimits": {
+                "primary": {"usedPercent": 75, "resetsAt": 2000, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 40, "resetsAt": 9000, "windowDurationMins": 10080},
+            }
+        }
+        bot.handle_update(
+            {"message": {"chat": {"id": 123}, "text": bot.STATUS_BUTTON}},
+            "token", "123", "codex", "limits",
+        )
+        reply = telegram.call_args.args[2]
+        self.assertIn("Лимиты Codex сейчас", reply["text"])
+        self.assertEqual(reply["text"].count('<tg-time unix='), 2)
+        self.assertEqual(len(json.loads(reply["reply_markup"])["keyboard"]), 2)
 
     @patch("bot.telegram_request")
     @patch("bot.read_rate_limits")
@@ -126,6 +145,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("────────────────────", reply)
         self.assertEqual(reply.count('<tg-time unix='), 2)
         self.assertEqual(telegram.call_args.args[2]["parse_mode"], "HTML")
+        self.assertEqual(len(json.loads(telegram.call_args.args[2]["reply_markup"])["keyboard"]), 2)
         self.assertNotIn("disable_notification", telegram.call_args.args[2])
 
     @patch("bot.telegram_request")

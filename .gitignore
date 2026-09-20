@@ -5,3 +5,7 @@ IMG_4782.png
 *.env
 auth.json
 state.json
+updates.json
+.codex/
+.venv/
+.DS_Store

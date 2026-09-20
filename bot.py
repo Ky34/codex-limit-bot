@@ -31,9 +31,9 @@ DIVIDER = "────────────────────"
 QUIET_START_HOUR = 2
 QUIET_END_HOUR = 10
 try:
-    MOSCOW = ZoneInfo("Europe/Moscow")
+    MINSK = ZoneInfo("Europe/Minsk")
 except ZoneInfoNotFoundError:
-    MOSCOW = timezone(timedelta(hours=3))
+    MINSK = timezone(timedelta(hours=3))
 
 
 def read_rate_limits(codex: str = "codex", timeout: int = 30) -> dict:
@@ -151,8 +151,10 @@ def remaining_percent(window: dict) -> float:
 
 
 def limit_block(duration: int, window: dict, next_update: bool = False) -> str:
-    reset = datetime.fromtimestamp(int(window["resetsAt"]), MOSCOW)
-    date = f"{reset.day} {MONTHS[reset.month - 1]}, {reset:%H:%M}"
+    reset_at = int(window["resetsAt"])
+    reset = datetime.fromtimestamp(reset_at, MINSK)
+    fallback_date = f"{reset.day} {MONTHS[reset.month - 1]}, {reset:%H:%M}"
+    date = f'<tg-time unix="{reset_at}" format="Dt">{fallback_date}</tg-time>'
     label = "Следующее обновление" if next_update else "Обновление"
     return (
         f"{LIMIT_ICONS[duration]} <b>{LIMITS[duration]} лимит</b>\n\n"
@@ -262,7 +264,7 @@ def telegram_request(token: str, method: str, data: dict, timeout: int = 20) -> 
 
 
 def is_quiet_hours(now: datetime | None = None) -> bool:
-    local_time = now or datetime.now(MOSCOW)
+    local_time = now or datetime.now(MINSK)
     return QUIET_START_HOUR <= local_time.hour < QUIET_END_HOUR
 
 

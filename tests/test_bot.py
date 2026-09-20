@@ -23,6 +23,7 @@ class NotificationTests(unittest.TestCase):
         self.assertIn("⏱️ <b>Пятичасовой лимит</b>\n\nОсталось: <b>19%</b>", events[0][0])
         self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>60%</b>", events[0][0])
         self.assertIn("────────────────────", events[0][0])
+        self.assertEqual(events[0][0].count('<tg-time unix='), 2)
         self.assertNotIn("Другой лимит", events[0][0])
         events, state = bot.notifications(windows(five_hour_remaining=9), state, now=1000)
         self.assertEqual(len(events), 1)
@@ -73,9 +74,12 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(events, [])
 
     def test_reset_date_uses_russian_month(self):
-        reset = int(datetime(2026, 9, 20, 5, 30, tzinfo=bot.MOSCOW).timestamp())
+        reset = int(datetime(2026, 9, 20, 5, 30, tzinfo=bot.MINSK).timestamp())
         message = bot.format_reset_alert(300, windows(five_hour_reset=reset))
-        self.assertIn("Следующее обновление: 20 сентября, 05:30", message)
+        self.assertIn(
+            f'Следующее обновление: <tg-time unix="{reset}" format="Dt">'
+            '20 сентября, 05:30</tg-time>', message
+        )
 
     def test_existing_10_percent_alert_does_not_hide_new_5_percent_alert(self):
         old = {"300": {"resetsAt": 2000, "level": 3}}
@@ -105,6 +109,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("⏱️ <b>Пятичасовой лимит</b>\n\nОсталось: <b>25%</b>", reply)
         self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>60%</b>", reply)
         self.assertIn("────────────────────", reply)
+        self.assertEqual(reply.count('<tg-time unix='), 2)
         self.assertEqual(telegram.call_args.args[2]["parse_mode"], "HTML")
         self.assertNotIn("disable_notification", telegram.call_args.args[2])
 
@@ -124,7 +129,7 @@ class QuietHoursTests(unittest.TestCase):
             (1, 59, False), (2, 0, True), (9, 59, True), (10, 0, False)
         ):
             with self.subTest(hour=hour, minute=minute):
-                now = datetime(2026, 9, 20, hour, minute, tzinfo=bot.MOSCOW)
+                now = datetime(2026, 9, 20, hour, minute, tzinfo=bot.MINSK)
                 self.assertEqual(bot.is_quiet_hours(now), expected)
 
     @patch("bot.telegram_request")

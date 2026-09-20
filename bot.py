@@ -303,6 +303,14 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
+def timezone_keyboard() -> str:
+    return json.dumps({
+        "keyboard": [[{"text": "📍 Обновить часовой пояс", "request_location": True}]],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }, ensure_ascii=False)
+
+
 def handle_update(
     update: dict, token: str, chat_id: str, codex: str, status_command: str,
     timezone_state_path: Path = TIMEZONE_STATE,
@@ -342,17 +350,25 @@ def handle_update(
             detail = (
                 "Живая геолокация активна: тихие часы 02:00–10:00 будут следовать местному времени."
                 if active else
-                "Тихие часы 02:00–10:00 будут действовать в этом часовом поясе. Для смены в поездках включите живую геолокацию."
+                "Тихие часы 02:00–10:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
             )
             telegram_request(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": f"📍 Часовой пояс: {zone_name}.\n{detail}",
+                "reply_markup": timezone_keyboard(),
             })
         return
     if "edited_message" in update:
         return
     text = message.get("text", "")
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text.strip() else ""
+    if command in ("/start", "/timezone"):
+        telegram_request(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": "📍 Нажмите «Обновить часовой пояс», чтобы один раз отправить текущую геопозицию. Бот сохранит часовой пояс для тихих часов 02:00–10:00.",
+            "reply_markup": timezone_keyboard(),
+        })
+        return
     if command != f"/{status_command}":
         return
     try:

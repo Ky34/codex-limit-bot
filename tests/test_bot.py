@@ -1,3 +1,4 @@
+import json
 import unittest
 import tempfile
 from datetime import datetime, timezone
@@ -95,6 +96,18 @@ class NotificationTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     @patch("bot.telegram_request")
+    def test_timezone_button_requests_one_time_location(self, telegram):
+        for command in ("/start", "/timezone"):
+            with self.subTest(command=command):
+                bot.handle_update(
+                    {"message": {"chat": {"id": 123}, "text": command}},
+                    "token", "123", "codex", "limits",
+                )
+                markup = json.loads(telegram.call_args.args[2]["reply_markup"])
+                self.assertTrue(markup["keyboard"][0][0]["request_location"])
+                self.assertTrue(markup["is_persistent"])
+
+    @patch("bot.telegram_request")
     @patch("bot.read_rate_limits")
     def test_status_command_replies_with_both_limits(self, read_limits, telegram):
         read_limits.return_value = {
@@ -126,6 +139,25 @@ class CommandTests(unittest.TestCase):
 
 
 class QuietHoursTests(unittest.TestCase):
+    @patch("bot.telegram_request")
+    def test_button_location_saves_zone_for_quiet_hours(self, telegram):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "timezone.json"
+            bot.handle_update(
+                {"message": {"chat": {"id": 123}, "message_id": 42,
+                             "location": {"longitude": 13.4, "latitude": 52.52}}},
+                "token", "123", "codex", "limits", path,
+            )
+            state = bot.read_timezone_state(path)
+            self.assertEqual(state["zone"], "Europe/Berlin")
+            self.assertFalse(state["active"])
+            self.assertNotIn("latitude", path.read_text(encoding="utf-8"))
+            self.assertIn("При следующем переезде нажмите кнопку", telegram.call_args.args[2]["text"])
+            self.assertIn("reply_markup", telegram.call_args.args[2])
+            self.assertTrue(bot.is_quiet_hours(
+                datetime(2026, 9, 20, 0, 30, tzinfo=timezone.utc), path,
+            ))
+
     def test_quiet_hours_boundaries(self):
         for hour, minute, expected in (
             (1, 59, False), (2, 0, True), (9, 59, True), (10, 0, False)

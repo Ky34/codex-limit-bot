@@ -150,7 +150,7 @@ class QuietHoursTests(unittest.TestCase):
             )
             state = bot.read_timezone_state(path)
             self.assertEqual(state["zone"], "Europe/Berlin")
-            self.assertFalse(state["active"])
+            self.assertEqual(set(state), {"zone"})
             self.assertNotIn("latitude", path.read_text(encoding="utf-8"))
             self.assertIn("При следующем переезде нажмите кнопку", telegram.call_args.args[2]["text"])
             self.assertIn("reply_markup", telegram.call_args.args[2])
@@ -191,26 +191,28 @@ class QuietHoursTests(unittest.TestCase):
             self.assertTrue(bot.is_quiet_hours(winter, path))
 
     @patch("bot.telegram_request")
-    def test_live_location_updates_zone_without_saving_coordinates(self, telegram):
+    def test_live_location_does_not_update_zone(self, telegram):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "timezone.json"
+            bot.save_state(path, {"zone": "Europe/Minsk"})
             initial = {"message": {
                 "chat": {"id": 123}, "message_id": 7, "date": 1790000000,
-                "location": {"longitude": 27.56, "latitude": 53.9,
-                             "live_period": bot.INDEFINITE_LIVE_PERIOD},
+                "location": {"longitude": 13.4, "latitude": 52.52,
+                             "live_period": 0x7FFFFFFF},
             }}
             bot.handle_update(initial, "token", "123", "codex", "limits", path)
             self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Minsk")
+            self.assertIn("Живая геолокация не используется", telegram.call_args.args[2]["text"])
             edited = {"edited_message": {
                 "chat": {"id": 123}, "message_id": 7, "date": 1790000000,
                 "location": {"longitude": 13.4, "latitude": 52.52,
-                             "live_period": bot.INDEFINITE_LIVE_PERIOD},
+                             "live_period": 0x7FFFFFFF},
             }}
             bot.handle_update(edited, "token", "123", "codex", "limits", path)
-            self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Berlin")
+            self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Minsk")
             self.assertNotIn("longitude", path.read_text(encoding="utf-8"))
             self.assertNotIn("latitude", path.read_text(encoding="utf-8"))
-            self.assertEqual(telegram.call_count, 2)
+            self.assertEqual(telegram.call_count, 1)
 
     @patch("bot.telegram_request")
     def test_location_from_another_chat_cannot_change_zone(self, telegram):

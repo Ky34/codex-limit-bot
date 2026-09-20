@@ -32,7 +32,6 @@ DIVIDER = "────────────────────"
 QUIET_START_HOUR = 2
 QUIET_END_HOUR = 10
 TIMEZONE_STATE = Path("/var/lib/codex-limit-bot/timezone.json")
-INDEFINITE_LIVE_PERIOD = 0x7FFFFFFF
 try:
     MINSK = ZoneInfo("Europe/Minsk")
 except ZoneInfoNotFoundError:
@@ -315,14 +314,17 @@ def handle_update(
     update: dict, token: str, chat_id: str, codex: str, status_command: str,
     timezone_state_path: Path = TIMEZONE_STATE,
 ) -> None:
-    message = update.get("message") or update.get("edited_message") or {}
+    message = update.get("message") or {}
     if str((message.get("chat") or {}).get("id")) != chat_id:
         return
     location = message.get("location")
     if isinstance(location, dict):
-        previous = read_timezone_state(timezone_state_path)
-        is_edit = "edited_message" in update
-        if is_edit and message.get("message_id") != previous.get("message_id"):
+        if "live_period" in location:
+            telegram_request(token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": "Живая геолокация не используется. Нажмите «📍 Обновить часовой пояс», чтобы отправить геопозицию один раз.",
+                "reply_markup": timezone_keyboard(),
+            })
             return
         try:
             latitude = float(location["latitude"])
@@ -333,32 +335,15 @@ def handle_update(
             ZoneInfo(zone_name)
         except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError):
             return
-        live_period = location.get("live_period")
-        live_until = (
-            None if live_period == INDEFINITE_LIVE_PERIOD else
-            int(message.get("date", time.time())) + int(live_period)
-            if live_period else None
-        )
-        active = bool(live_period) and (live_until is None or live_until > time.time())
-        changed = zone_name != previous.get("zone") or active != previous.get("active")
-        state = {
-            "zone": zone_name, "message_id": message.get("message_id"),
-            "active": active, "live_until": live_until,
-        }
-        save_state(timezone_state_path, state)
-        if changed or not is_edit:
-            detail = (
-                "Живая геолокация активна: тихие часы 02:00–10:00 будут следовать местному времени."
-                if active else
+        save_state(timezone_state_path, {"zone": zone_name})
+        telegram_request(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": (
+                f"📍 Часовой пояс: {zone_name}.\n"
                 "Тихие часы 02:00–10:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
-            )
-            telegram_request(token, "sendMessage", {
-                "chat_id": chat_id,
-                "text": f"📍 Часовой пояс: {zone_name}.\n{detail}",
-                "reply_markup": timezone_keyboard(),
-            })
-        return
-    if "edited_message" in update:
+            ),
+            "reply_markup": timezone_keyboard(),
+        })
         return
     text = message.get("text", "")
     command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text.strip() else ""
@@ -394,7 +379,7 @@ def listen_commands(
                 {
                     "offset": offset,
                     "timeout": 25,
-                    "allowed_updates": json.dumps(["message", "edited_message"]),
+                    "allowed_updates": json.dumps(["message"]),
                 },
                 timeout=35,
             )["result"]
@@ -402,15 +387,6 @@ def listen_commands(
                 handle_update(update, token, chat_id, codex, status_command, timezone_state_path)
                 offset = int(update["update_id"]) + 1
                 save_state(offset_path, {"offset": offset})
-            zone_state = read_timezone_state(timezone_state_path)
-            if zone_state.get("active") and zone_state.get("live_until") is not None:
-                if time.time() >= zone_state["live_until"]:
-                    zone_state["active"] = False
-                    save_state(timezone_state_path, zone_state)
-                    telegram_request(token, "sendMessage", {
-                        "chat_id": chat_id,
-                        "text": "📍 Живая геолокация завершилась. Тихие часы пока останутся по последнему известному часовому поясу. Чтобы они менялись в поездках, снова поделитесь живой геолокацией.",
-                    })
         except Exception as exc:
             print(f"codex-limit-bot listener: {exc}", file=sys.stderr)
             time.sleep(5)

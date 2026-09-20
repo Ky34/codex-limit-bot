@@ -1,4 +1,3 @@
-import json
 import unittest
 import tempfile
 from datetime import datetime, timezone
@@ -160,65 +159,25 @@ class QuietHoursTests(unittest.TestCase):
             self.assertTrue(bot.is_quiet_hours(winter, path))
 
     @patch("bot.telegram_request")
-    def test_one_time_location_changes_offset_without_saving_coordinates(self, telegram):
+    def test_live_location_updates_zone_without_saving_coordinates(self, telegram):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "timezone.json"
-            berlin = {"message": {"chat": {"id": 123},
-                "location": {"longitude": 13.4, "latitude": 52.52}}}
-            bot.handle_update(berlin, "token", "123", "codex", "limits", path)
+            initial = {"message": {
+                "chat": {"id": 123}, "message_id": 7, "date": 1790000000,
+                "location": {"longitude": 27.56, "latitude": 53.9,
+                             "live_period": bot.INDEFINITE_LIVE_PERIOD},
+            }}
+            bot.handle_update(initial, "token", "123", "codex", "limits", path)
+            self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Minsk")
+            edited = {"edited_message": {
+                "chat": {"id": 123}, "message_id": 7, "date": 1790000000,
+                "location": {"longitude": 13.4, "latitude": 52.52,
+                             "live_period": bot.INDEFINITE_LIVE_PERIOD},
+            }}
+            bot.handle_update(edited, "token", "123", "codex", "limits", path)
             self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Berlin")
-            self.assertIn("Смещение изменилось", telegram.call_args.args[2]["text"])
             self.assertNotIn("longitude", path.read_text(encoding="utf-8"))
             self.assertNotIn("latitude", path.read_text(encoding="utf-8"))
-            self.assertEqual(telegram.call_count, 1)
-
-    @patch("bot.telegram_request")
-    def test_same_offset_new_zone_is_saved_without_change_notice(self, telegram):
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "timezone.json"
-            bot.save_state(path, {"zone": "Europe/Berlin"})
-            paris = {"message": {"chat": {"id": 123},
-                "location": {"longitude": 2.35, "latitude": 48.86}}}
-            bot.handle_update(paris, "token", "123", "codex", "limits", path)
-            self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Paris")
-            self.assertIn("Смещение времени не изменилось", telegram.call_args.args[2]["text"])
-
-    @patch("bot.telegram_request")
-    def test_timezone_command_requests_one_time_location(self, telegram):
-        bot.handle_update({"message": {"chat": {"id": 123}, "text": "/timezone"}},
-                          "token", "123", "codex", "limits")
-        reply = telegram.call_args.args[2]
-        self.assertTrue(json.loads(reply["reply_markup"])["keyboard"][0][0]["request_location"])
-
-    @patch("bot.telegram_request")
-    def test_live_location_edit_does_not_update_zone(self, telegram):
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "timezone.json"
-            bot.save_state(path, {"zone": "Europe/Minsk"})
-            edited = {"edited_message": {"chat": {"id": 123},
-                "location": {"longitude": 13.4, "latitude": 52.52}}}
-            bot.handle_update(edited, "token", "123", "codex", "limits", path)
-            self.assertEqual(bot.read_timezone_state(path)["zone"], "Europe/Minsk")
-            telegram.assert_not_called()
-
-    @patch("bot.telegram_request")
-    def test_phone_offset_prompt_only_when_shifted_and_once(self, telegram):
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "timezone.json"
-            bot.save_state(path, {"zone": "Europe/Minsk"})
-            current = bot.format_utc_offset(bot.utc_offset("Europe/Minsk"))[3:]
-            shifted = "+02:00"
-            self.assertNotEqual(current, shifted)
-            same = {"message": {"chat": {"id": 123}, "text": f"/tzcheck {current}"}}
-            moved = {"message": {"chat": {"id": 123}, "text": f"/tzcheck {shifted}"}}
-            bot.handle_update(same, "token", "123", "codex", "limits", path)
-            telegram.assert_not_called()
-            bot.handle_update(moved, "token", "123", "codex", "limits", path)
-            bot.handle_update(moved, "token", "123", "codex", "limits", path)
-            self.assertEqual(telegram.call_count, 1)
-            self.assertIn("Отправьте /timezone", telegram.call_args.args[2]["text"])
-            bot.handle_update(same, "token", "123", "codex", "limits", path)
-            bot.handle_update(moved, "token", "123", "codex", "limits", path)
             self.assertEqual(telegram.call_count, 2)
 
     @patch("bot.telegram_request")

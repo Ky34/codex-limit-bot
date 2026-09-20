@@ -28,6 +28,8 @@ MONTHS = (
 THRESHOLDS = (20, 10, 5)
 THRESHOLDS_VERSION = 2
 DIVIDER = "────────────────────"
+QUIET_START_HOUR = 2
+QUIET_END_HOUR = 10
 try:
     MOSCOW = ZoneInfo("Europe/Moscow")
 except ZoneInfoNotFoundError:
@@ -259,6 +261,22 @@ def telegram_request(token: str, method: str, data: dict, timeout: int = 20) -> 
     return payload
 
 
+def is_quiet_hours(now: datetime | None = None) -> bool:
+    local_time = now or datetime.now(MOSCOW)
+    return QUIET_START_HOUR <= local_time.hour < QUIET_END_HOUR
+
+
+def send_automatic_message(
+    token: str, chat_id: str, message: str, parse_mode: str | None = None
+) -> None:
+    data = {"chat_id": chat_id, "text": message}
+    if parse_mode:
+        data["parse_mode"] = parse_mode
+    if is_quiet_hours():
+        data["disable_notification"] = True
+    telegram_request(token, "sendMessage", data)
+
+
 def save_state(path: Path, state: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -345,32 +363,22 @@ def main() -> int:
         windows = codex_windows(response)
     except Exception:
         if not args.dry_run and not state.get("_error_sent"):
-            telegram_request(
-                token,
-                "sendMessage",
-                {
-                    "chat_id": chat_id,
-                    "text": "⚠️ Мониторинг лимитов Codex временно не получает данные. Проверю снова через минуту.",
-                },
+            send_automatic_message(
+                token, chat_id,
+                "⚠️ Мониторинг лимитов Codex временно не получает данные. Проверю снова через минуту.",
             )
             state["_error_sent"] = True
             save_state(args.state, state)
         raise
     if state.pop("_error_sent", False) and not args.dry_run:
-        telegram_request(
-            token,
-            "sendMessage",
-            {"chat_id": chat_id, "text": "✅ Мониторинг лимитов Codex восстановлен."},
-        )
+        send_automatic_message(token, chat_id, "✅ Мониторинг лимитов Codex восстановлен.")
         save_state(args.state, state)
     pending, updated = notifications(windows, state)
     for message, snapshot in pending:
         if args.dry_run:
             print(message)
         else:
-            telegram_request(
-                token, "sendMessage", {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
-            )
+            send_automatic_message(token, chat_id, message, parse_mode="HTML")
             save_state(args.state, snapshot)
     if not args.dry_run:
         save_state(args.state, updated)

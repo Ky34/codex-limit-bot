@@ -106,6 +106,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("📅 <b>Недельный лимит</b>\n\nОсталось: <b>60%</b>", reply)
         self.assertIn("────────────────────", reply)
         self.assertEqual(telegram.call_args.args[2]["parse_mode"], "HTML")
+        self.assertNotIn("disable_notification", telegram.call_args.args[2])
 
     @patch("bot.telegram_request")
     @patch("bot.read_rate_limits")
@@ -115,6 +116,29 @@ class CommandTests(unittest.TestCase):
         )
         read_limits.assert_not_called()
         telegram.assert_not_called()
+
+
+class QuietHoursTests(unittest.TestCase):
+    def test_quiet_hours_boundaries(self):
+        for hour, minute, expected in (
+            (1, 59, False), (2, 0, True), (9, 59, True), (10, 0, False)
+        ):
+            with self.subTest(hour=hour, minute=minute):
+                now = datetime(2026, 9, 20, hour, minute, tzinfo=bot.MOSCOW)
+                self.assertEqual(bot.is_quiet_hours(now), expected)
+
+    @patch("bot.telegram_request")
+    @patch("bot.is_quiet_hours", return_value=True)
+    def test_automatic_message_is_silent_at_night(self, quiet, telegram):
+        bot.send_automatic_message("token", "123", "Тест", parse_mode="HTML")
+        self.assertTrue(telegram.call_args.args[2]["disable_notification"])
+        self.assertEqual(telegram.call_args.args[2]["parse_mode"], "HTML")
+
+    @patch("bot.telegram_request")
+    @patch("bot.is_quiet_hours", return_value=False)
+    def test_automatic_message_is_normal_by_day(self, quiet, telegram):
+        bot.send_automatic_message("token", "123", "Тест")
+        self.assertNotIn("disable_notification", telegram.call_args.args[2])
 
 
 if __name__ == "__main__":

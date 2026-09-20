@@ -11,7 +11,7 @@ WorkingDirectory=/opt/codex-limit-bot
 Environment=HOME=/var/lib/codex-limit-bot
 Environment=CODEX_HOME=/var/lib/codex-limit-bot/.codex
 EnvironmentFile=/etc/codex-limit-bot.env
-ExecStart=/usr/bin/python3 /opt/codex-limit-bot/bot.py --codex /opt/codex-limit-bot/bin/codex
+ExecStart=/opt/codex-limit-bot/.venv/bin/python /opt/codex-limit-bot/bot.py --codex /opt/codex-limit-bot/bin/codex
 StateDirectory=codex-limit-bot
 StateDirectoryMode=0700
 NoNewPrivileges=true

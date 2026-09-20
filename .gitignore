@@ -6,6 +6,7 @@ IMG_4782.png
 auth.json
 state.json
 updates.json
+timezone.json
 .codex/
 .venv/
 .DS_Store

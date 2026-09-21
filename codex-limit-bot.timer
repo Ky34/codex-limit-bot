@@ -1,10 +1,11 @@
 [Unit]
-Description=Check Codex usage limits every ten minutes
+Description=Check Codex usage limits every minute
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=10min
-RandomizedDelaySec=30s
+OnUnitActiveSec=1min
+AccuracySec=1s
+RandomizedDelaySec=0
 Persistent=true
 Unit=codex-limit-bot.service
 

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -16,13 +17,26 @@ from urllib.error import HTTPError, URLError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from tzfpy import get_tz
 
 
 LIMITS = {300: "Пятичасовой", 10080: "Недельный"}
+LIMIT_ICONS = {300: "⏱️", 10080: "📅"}
+MONTHS = (
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+)
+THRESHOLDS = (20, 10, 5)
+THRESHOLDS_VERSION = 2
+DIVIDER = "────────────────────"
+QUIET_START_HOUR = 2
+QUIET_END_HOUR = 10
+TIMEZONE_STATE = Path("/var/lib/codex-limit-bot/timezone.json")
+STATUS_BUTTON = "📊 Лимиты"
 try:
-    MOSCOW = ZoneInfo("Europe/Moscow")
+    MINSK = ZoneInfo("Europe/Minsk")
 except ZoneInfoNotFoundError:
-    MOSCOW = timezone(timedelta(hours=3))
+    MINSK = timezone(timedelta(hours=3))
 
 
 def read_rate_limits(codex: str = "codex", timeout: int = 30) -> dict:
@@ -128,58 +142,173 @@ def codex_windows(response: dict) -> dict[int, dict]:
 
 
 def severity(remaining: float) -> int:
-    if remaining <= 10:
-        return 3
-    if remaining <= 20:
-        return 2
-    if remaining <= 30:
-        return 1
-    return 0
+    return sum(remaining <= threshold for threshold in THRESHOLDS)
 
 
 def format_percent(value: float) -> str:
     return f"{value:.1f}".rstrip("0").rstrip(".")
 
 
-def format_message(duration: int, remaining: float, resets_at: int) -> str:
-    reset = datetime.fromtimestamp(resets_at, MOSCOW).strftime("%d.%m.%Y в %H:%M МСК")
-    icon = {1: "⚠️", 2: "🟠", 3: "🔴"}[severity(remaining)]
+def remaining_percent(window: dict) -> float:
+    return max(0.0, min(100.0, 100.0 - float(window["usedPercent"])))
+
+
+def limit_block(duration: int, window: dict, next_update: bool = False) -> str:
+    reset_at = int(window["resetsAt"])
+    reset = datetime.fromtimestamp(reset_at, MINSK)
+    fallback_date = f"{reset.day} {MONTHS[reset.month - 1]}, {reset:%H:%M}"
+    date = f'<tg-time unix="{reset_at}" format="Dt">{fallback_date}</tg-time>'
+    label = "Следующее обновление" if next_update else "Обновление"
     return (
-        f"{icon} {LIMITS[duration]} лимит Codex: осталось {format_percent(remaining)}%.\n"
-        f"Сброс: {reset}."
+        f"{LIMIT_ICONS[duration]} <b>{LIMITS[duration]} лимит</b>\n\n"
+        f"Осталось: <b>{format_percent(remaining_percent(window))}%</b>\n"
+        f"{label}: {date}"
     )
 
 
-def notifications(windows: dict[int, dict], state: dict) -> tuple[list[tuple[int, str]], dict]:
+def other_duration(duration: int) -> int:
+    return next(candidate for candidate in LIMITS if candidate != duration)
+
+
+def format_status(windows: dict[int, dict]) -> str:
+    return "📊 <b>Лимиты Codex сейчас</b>\n\n" + f"\n\n{DIVIDER}\n\n".join(
+        limit_block(duration, windows[duration])
+        for duration in LIMITS
+    )
+
+
+def format_threshold_alert(duration: int, windows: dict[int, dict]) -> str:
+    remaining = remaining_percent(windows[duration])
+    icon = {1: "⚠️", 2: "🟠", 3: "🔴"}[severity(remaining)]
+    threshold = THRESHOLDS[severity(remaining) - 1]
+    title = "исчерпан!" if remaining == 0 else f"порог {threshold}% пройден!"
+    separator = " " if remaining == 0 else ": "
+    other = other_duration(duration)
+    return (
+        f"{icon} <b>{LIMITS[duration]} лимит{separator}{title}</b>\n\n"
+        f"{limit_block(duration, windows[duration], True)}\n\n"
+        f"{DIVIDER}\n\n"
+        f"{limit_block(other, windows[other])}"
+    )
+
+
+def format_reset_alert(duration: int, windows: dict[int, dict]) -> str:
+    other = other_duration(duration)
+    return (
+        f"🔄 <b>{LIMITS[duration]} лимит обновлён!</b>\n\n"
+        f"{limit_block(duration, windows[duration], True)}\n\n"
+        f"{DIVIDER}\n\n"
+        f"{limit_block(other, windows[other])}"
+    )
+
+
+def migrate_state(state: dict) -> dict:
     updated = dict(state)
-    pending: list[tuple[int, str]] = []
+    if updated.get("_thresholds_version", 1) < THRESHOLDS_VERSION:
+        for duration in LIMITS:
+            key = str(duration)
+            if isinstance(updated.get(key), dict):
+                previous = dict(updated[key])
+                previous["level"] = max(0, int(previous.get("level", 0)) - 1)
+                updated[key] = previous
+        updated["_thresholds_version"] = THRESHOLDS_VERSION
+    return updated
+
+
+def notifications(
+    windows: dict[int, dict], state: dict, now: int | None = None
+) -> tuple[list[tuple[str, dict]], dict]:
+    updated = migrate_state(state)
+    pending: list[tuple[str, dict]] = []
+    now = int(time.time()) if now is None else now
     for duration, window in windows.items():
-        used = float(window["usedPercent"])
-        remaining = max(0.0, min(100.0, 100.0 - used))
-        resets_at = int(window["resetsAt"])
-        level = severity(remaining)
         key = str(duration)
         previous = updated.get(key, {})
-        previous_level = previous.get("level", 0) if previous.get("resetsAt") == resets_at else 0
-        if level > previous_level:
-            pending.append((duration, format_message(duration, remaining, resets_at)))
-        updated[key] = {"resetsAt": resets_at, "level": max(previous_level, level)}
+        resets_at = int(window["resetsAt"])
+        used = float(window["usedPercent"])
+        old_reset = previous.get("resetsAt")
+        old_used = previous.get("usedPercent")
+        previous_exhausted = bool(previous.get(
+            "exhausted", old_used is not None and float(old_used) >= 100.0
+        ))
+        reset_happened = old_reset is not None and old_reset != resets_at and (
+            int(old_reset) <= now or (old_used is not None and used < float(old_used))
+        )
+        if reset_happened:
+            updated[key] = {
+                "resetsAt": resets_at, "level": 0, "usedPercent": used,
+                "exhausted": False,
+            }
+            pending.append((format_reset_alert(duration, windows), dict(updated)))
+            previous_level = 0
+            previous_exhausted = False
+        else:
+            previous_level = int(previous.get("level", 0))
+
+        remaining = remaining_percent(window)
+        level = severity(remaining)
+        exhausted = remaining == 0
+        notify_exhausted = exhausted and not previous_exhausted
+        notify_threshold = not exhausted and level > previous_level
+        if notify_exhausted or notify_threshold:
+            updated[key] = {
+                "resetsAt": resets_at, "level": max(previous_level, level),
+                "usedPercent": used, "exhausted": exhausted,
+            }
+            pending.append((format_threshold_alert(duration, windows), dict(updated)))
+        else:
+            updated[key] = {
+                "resetsAt": resets_at,
+                "level": max(previous_level, level),
+                "usedPercent": used,
+                "exhausted": exhausted,
+            }
     return pending, updated
 
 
-def telegram_request(token: str, method: str, data: dict) -> dict:
+def telegram_request(token: str, method: str, data: dict, timeout: int = 20) -> dict:
     body = urllib.parse.urlencode(data).encode("utf-8")
     request = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/{method}", data=body, method="POST"
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
-    except (HTTPError, URLError):
+    except (HTTPError, URLError, TimeoutError):
         raise RuntimeError(f"Telegram {method} request failed") from None
     if not payload.get("ok"):
         raise RuntimeError(f"Telegram {method} failed")
     return payload
+
+
+def read_timezone_state(path: Path = TIMEZONE_STATE) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError, OSError):
+        return {}
+
+
+def local_zone(path: Path = TIMEZONE_STATE):
+    try:
+        return ZoneInfo(read_timezone_state(path).get("zone", "Europe/Minsk"))
+    except (ZoneInfoNotFoundError, TypeError, ValueError):
+        return MINSK
+
+
+def is_quiet_hours(now: datetime | None = None, timezone_state_path: Path = TIMEZONE_STATE) -> bool:
+    local_time = (now or datetime.now(timezone.utc)).astimezone(local_zone(timezone_state_path))
+    return QUIET_START_HOUR <= local_time.hour < QUIET_END_HOUR
+
+
+def send_automatic_message(
+    token: str, chat_id: str, message: str, parse_mode: str | None = None
+) -> None:
+    data = {"chat_id": chat_id, "text": message}
+    if parse_mode:
+        data["parse_mode"] = parse_mode
+    if is_quiet_hours():
+        data["disable_notification"] = True
+    telegram_request(token, "sendMessage", data)
 
 
 def save_state(path: Path, state: dict) -> None:
@@ -189,13 +318,115 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
+def bot_keyboard() -> str:
+    return json.dumps({
+        "keyboard": [
+            [STATUS_BUTTON],
+            [{"text": "📍 Обновить часовой пояс", "request_location": True}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }, ensure_ascii=False)
+
+
+def handle_update(
+    update: dict, token: str, chat_id: str, codex: str, status_command: str,
+    timezone_state_path: Path = TIMEZONE_STATE,
+) -> None:
+    message = update.get("message") or {}
+    if str((message.get("chat") or {}).get("id")) != chat_id:
+        return
+    location = message.get("location")
+    if isinstance(location, dict):
+        if "live_period" in location:
+            telegram_request(token, "sendMessage", {
+                "chat_id": chat_id,
+                "text": "Живая геолокация не используется. Нажмите «📍 Обновить часовой пояс», чтобы отправить геопозицию один раз.",
+                "reply_markup": bot_keyboard(),
+            })
+            return
+        try:
+            latitude = float(location["latitude"])
+            longitude = float(location["longitude"])
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+                return
+            zone_name = get_tz(longitude, latitude)
+            ZoneInfo(zone_name)
+        except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError):
+            return
+        save_state(timezone_state_path, {"zone": zone_name})
+        telegram_request(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": (
+                f"📍 Часовой пояс: {zone_name}.\n"
+                "Тихие часы 02:00–10:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
+            ),
+            "reply_markup": bot_keyboard(),
+        })
+        return
+    text = message.get("text", "")
+    command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text.strip() else ""
+    if command in ("/start", "/timezone"):
+        telegram_request(token, "sendMessage", {
+            "chat_id": chat_id,
+            "text": "Используйте кнопки «📊 Лимиты» для просмотра остатков и «📍 Обновить часовой пояс» для настройки тихих часов 02:00–10:00.",
+            "reply_markup": bot_keyboard(),
+        })
+        return
+    if command != f"/{status_command}" and text.strip() != STATUS_BUTTON:
+        return
+    try:
+        windows = codex_windows(read_rate_limits(codex))
+        reply = format_status(windows)
+    except Exception:
+        reply = "⚠️ Сейчас не удалось получить лимиты Codex. Попробуйте снова позже."
+    telegram_request(
+        token, "sendMessage", {
+            "chat_id": chat_id, "text": reply, "parse_mode": "HTML",
+            "reply_markup": bot_keyboard(),
+        }
+    )
+
+
+def listen_commands(
+    token: str, chat_id: str, codex: str, status_command: str,
+    offset_path: Path, timezone_state_path: Path = TIMEZONE_STATE,
+) -> None:
+    offset = int(json.loads(offset_path.read_text(encoding="utf-8"))["offset"]) if offset_path.exists() else 0
+    while True:
+        try:
+            updates = telegram_request(
+                token,
+                "getUpdates",
+                {
+                    "offset": offset,
+                    "timeout": 25,
+                    "allowed_updates": json.dumps(["message"]),
+                },
+                timeout=35,
+            )["result"]
+            for update in updates:
+                handle_update(update, token, chat_id, codex, status_command, timezone_state_path)
+                offset = int(update["update_id"]) + 1
+                save_state(offset_path, {"offset": offset})
+        except Exception as exc:
+            print(f"codex-limit-bot listener: {exc}", file=sys.stderr)
+            time.sleep(5)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state", type=Path, default=Path("/var/lib/codex-limit-bot/state.json"))
     parser.add_argument("--codex", default="/root/.local/bin/codex")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--discover-chat", action="store_true")
+    parser.add_argument("--listen", action="store_true")
+    parser.add_argument("--offset", type=Path, default=Path("/var/lib/codex-limit-bot/updates.json"))
+    parser.add_argument("--timezone-state", type=Path, default=TIMEZONE_STATE)
+    parser.add_argument("--status-command", default=os.environ.get("TELEGRAM_STATUS_COMMAND", "limits"))
     args = parser.parse_args()
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", args.status_command):
+        parser.error("--status-command must be a Telegram command without /")
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -210,6 +441,9 @@ def main() -> int:
         return 0
     if not args.dry_run and (not token or not chat_id):
         parser.error("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
+    if args.listen:
+        listen_commands(token, chat_id, args.codex, args.status_command, args.offset, args.timezone_state)
+        return 0
 
     state = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else {}
     try:
@@ -217,32 +451,23 @@ def main() -> int:
         windows = codex_windows(response)
     except Exception:
         if not args.dry_run and not state.get("_error_sent"):
-            telegram_request(
-                token,
-                "sendMessage",
-                {
-                    "chat_id": chat_id,
-                    "text": "⚠️ Мониторинг лимитов Codex временно не получает данные. Проверю снова через 10 минут.",
-                },
+            send_automatic_message(
+                token, chat_id,
+                "⚠️ Мониторинг лимитов Codex временно не получает данные. Проверю снова через минуту.",
             )
             state["_error_sent"] = True
             save_state(args.state, state)
         raise
     if state.pop("_error_sent", False) and not args.dry_run:
-        telegram_request(
-            token,
-            "sendMessage",
-            {"chat_id": chat_id, "text": "✅ Мониторинг лимитов Codex восстановлен."},
-        )
+        send_automatic_message(token, chat_id, "✅ Мониторинг лимитов Codex восстановлен.")
         save_state(args.state, state)
     pending, updated = notifications(windows, state)
-    for duration, message in pending:
+    for message, snapshot in pending:
         if args.dry_run:
             print(message)
         else:
-            telegram_request(token, "sendMessage", {"chat_id": chat_id, "text": message})
-            state[str(duration)] = updated[str(duration)]
-            save_state(args.state, state)
+            send_automatic_message(token, chat_id, message, parse_mode="HTML")
+            save_state(args.state, snapshot)
     if not args.dry_run:
         save_state(args.state, updated)
     return 0

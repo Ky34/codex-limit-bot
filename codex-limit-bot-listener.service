@@ -1,17 +1,19 @@
 [Unit]
-Description=Codex usage limit Telegram notifier
+Description=Telegram commands for Codex usage limit bot
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 User=codexbot
 Group=codexbot
 WorkingDirectory=/opt/codex-limit-bot
 Environment=HOME=/var/lib/codex-limit-bot
 Environment=CODEX_HOME=/var/lib/codex-limit-bot/.codex
 EnvironmentFile=/etc/codex-limit-bot.env
-ExecStart=/opt/codex-limit-bot/.venv/bin/python /opt/codex-limit-bot/bot.py --codex /opt/codex-limit-bot/bin/codex
+ExecStart=/opt/codex-limit-bot/.venv/bin/python /opt/codex-limit-bot/bot.py --listen --codex /opt/codex-limit-bot/bin/codex
+Restart=always
+RestartSec=5s
 StateDirectory=codex-limit-bot
 StateDirectoryMode=0700
 NoNewPrivileges=true

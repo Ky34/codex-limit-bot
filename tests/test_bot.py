@@ -49,6 +49,31 @@ class NotificationTests(unittest.TestCase):
         events, _ = bot.notifications(windows(five_hour_remaining=0), {}, now=1000)
         self.assertIn("🔴 <b>Пятичасовой лимит исчерпан!</b>", events[0][0])
 
+    def test_exhausted_limit_is_reported_once_when_reset_time_moves(self):
+        old = {"_thresholds_version": 2, "10080": {
+            "resetsAt": 9000, "level": 3, "usedPercent": 96,
+            "exhausted": False,
+        }}
+        current = windows(weekly_remaining=0, weekly_reset=9001)
+        events, state = bot.notifications(current, old, now=1000)
+        self.assertEqual(len(events), 1)
+        self.assertIn("🔴 <b>Недельный лимит исчерпан!</b>", events[0][0])
+
+        current = windows(weekly_remaining=0, weekly_reset=9002)
+        events, state = bot.notifications(current, state, now=1001)
+        self.assertEqual(events, [])
+        self.assertTrue(state["10080"]["exhausted"])
+
+    def test_legacy_exhausted_state_does_not_repeat_alert(self):
+        old = {"_thresholds_version": 2, "10080": {
+            "resetsAt": 9000, "level": 3, "usedPercent": 100,
+        }}
+        events, state = bot.notifications(
+            windows(weekly_remaining=0, weekly_reset=9001), old, now=1000
+        )
+        self.assertEqual(events, [])
+        self.assertTrue(state["10080"]["exhausted"])
+
     def test_reset_alert_and_new_period(self):
         old = {"_thresholds_version": 2, "300": {"resetsAt": 2000, "level": 3, "usedPercent": 96}}
         events, state = bot.notifications(

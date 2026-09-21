@@ -228,25 +228,40 @@ def notifications(
         used = float(window["usedPercent"])
         old_reset = previous.get("resetsAt")
         old_used = previous.get("usedPercent")
+        previous_exhausted = bool(previous.get(
+            "exhausted", old_used is not None and float(old_used) >= 100.0
+        ))
         reset_happened = old_reset is not None and old_reset != resets_at and (
             int(old_reset) <= now or (old_used is not None and used < float(old_used))
         )
         if reset_happened:
-            updated[key] = {"resetsAt": resets_at, "level": 0, "usedPercent": used}
+            updated[key] = {
+                "resetsAt": resets_at, "level": 0, "usedPercent": used,
+                "exhausted": False,
+            }
             pending.append((format_reset_alert(duration, windows), dict(updated)))
             previous_level = 0
+            previous_exhausted = False
         else:
-            previous_level = int(previous.get("level", 0)) if old_reset == resets_at else 0
+            previous_level = int(previous.get("level", 0))
 
-        level = severity(remaining_percent(window))
-        if level > previous_level:
-            updated[key] = {"resetsAt": resets_at, "level": level, "usedPercent": used}
+        remaining = remaining_percent(window)
+        level = severity(remaining)
+        exhausted = remaining == 0
+        notify_exhausted = exhausted and not previous_exhausted
+        notify_threshold = not exhausted and level > previous_level
+        if notify_exhausted or notify_threshold:
+            updated[key] = {
+                "resetsAt": resets_at, "level": max(previous_level, level),
+                "usedPercent": used, "exhausted": exhausted,
+            }
             pending.append((format_threshold_alert(duration, windows), dict(updated)))
         else:
             updated[key] = {
                 "resetsAt": resets_at,
                 "level": max(previous_level, level),
                 "usedPercent": used,
+                "exhausted": exhausted,
             }
     return pending, updated
 

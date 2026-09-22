@@ -1,0 +1,40 @@
+# Разработка Codex Limit Bot
+
+Этот документ содержит технические шаги для локальной разработки. Назначение, функции и ограничения бота описаны в [README](../README.md); действующие правила работы — в [AGENTS.md](../AGENTS.md), текущий переносимый контекст — в [PROJECT_STATE.md](../PROJECT_STATE.md).
+
+## Подготовка окружения
+
+Нужен Python 3.11 или новее. Зависимости перечислены в `requirements.txt`. Рабочая ветка для разработки и ручной синхронизации между Windows-ПК и MacBook — `dev`.
+
+При первом получении проекта:
+
+```sh
+git clone https://github.com/Ky34/codex-limit-bot.git
+cd codex-limit-bot
+git switch --track origin/dev
+```
+
+На macOS:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+```
+
+На Windows (PowerShell):
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+## Синхронизация и публикация
+
+Перед работой проверь состояние рабочей копии, безопасно получи актуальную `dev` и прочитай `PROJECT_STATE.md`. Перед переходом на другое устройство зафиксируй существенные изменения контекста и отправь их в `dev`. При конфликтах или незавершённых локальных изменениях остановись и разберись с ними, не перезаписывая чужую работу.
+
+Публикация в `main` и обновление рабочего экземпляра на VPS — **отдельные действия**, требующие конкретного разрешения пользователя. Команды синхронизации не обновляют VPS. Не запускай локальный Telegram listener с рабочим токеном параллельно с серверным. Секреты и рабочие данные сервера не хранятся в Git.
+
+Локальное размещение Windows-проекта описано в [LOCAL-LAYOUT.md](../LOCAL-LAYOUT.md).

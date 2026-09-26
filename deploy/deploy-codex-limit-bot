@@ -1,0 +1,312 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 022
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+unset CDPATH ENV BASH_ENV
+
+readonly APP_ROOT=/opt/codex-limit-bot
+readonly RELEASES_DIR="${APP_ROOT}/releases"
+readonly CURRENT_LINK="${APP_ROOT}/current"
+readonly SHARED_DIR="${APP_ROOT}/shared"
+readonly SHARED_CODEX="${SHARED_DIR}/bin/codex"
+readonly STATE_DIR=/var/lib/codex-limit-bot
+readonly ENV_FILE=/etc/codex-limit-bot.env
+readonly POLICY_CHECKER=/usr/local/libexec/codex-limit-bot-check-systemd-policy
+readonly REPO_DIR="${APP_ROOT}/repo.git"
+readonly REPO_URL=https://github.com/Ky34/codex-limit-bot.git
+readonly LOCK_FILE=/run/lock/codex-limit-bot-deploy.lock
+readonly RUNTIME_USER=codexbot
+readonly RUNTIME_GROUP=codexbot
+readonly KEEP_RELEASES=5
+readonly UNIT_DIR=/etc/systemd/system
+readonly UNITS=(codex-limit-bot.service codex-limit-bot-listener.service codex-limit-bot.timer)
+
+usage() {
+  echo "Usage: $0 <40-character-lowercase-git-sha>" >&2
+  exit 64
+}
+
+log() {
+  printf '[deploy] %s\n' "$*"
+}
+
+die() {
+  printf '[deploy] ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+[[ "$#" -eq 1 ]] || usage
+readonly REQUESTED_SHA="$1"
+[[ "${REQUESTED_SHA}" =~ ^[0-9a-f]{40}$ ]] || die "commit must be an exact 40-character lowercase SHA"
+[[ "${EUID}" -eq 0 ]] || die "must run as root"
+
+for command in basename chown dirname find flock git id install ln mv readlink rm sed sleep sort stat systemctl systemd-analyze systemd-run tar; do
+  command -v "${command}" >/dev/null 2>&1 || die "required command is missing: ${command}"
+done
+
+install -d -o root -g root -m 0755 /run/lock
+exec 9>"${LOCK_FILE}"
+flock -n 9 || die "another deployment is already running"
+
+python3 - <<'PY' || die "Python 3.12 or newer is required"
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+PY
+
+not_group_or_world_writable() {
+  local mode
+  mode="$(stat -c '%a' "$1")" || return 1
+  (( (8#${mode} & 0022) == 0 ))
+}
+
+id -u "${RUNTIME_USER}" >/dev/null 2>&1 || die "runtime user does not exist: ${RUNTIME_USER}"
+[[ "$(id -gn "${RUNTIME_USER}")" == "${RUNTIME_GROUP}" ]] || die "runtime user's primary group must be ${RUNTIME_GROUP}"
+
+[[ -d "${STATE_DIR}" && ! -L "${STATE_DIR}" ]] || die "state directory must be a real directory: ${STATE_DIR}"
+[[ "$(stat -c '%U:%G' "${STATE_DIR}")" == "${RUNTIME_USER}:${RUNTIME_GROUP}" ]] || die "unexpected state directory owner"
+[[ -f "${ENV_FILE}" && ! -L "${ENV_FILE}" && -r "${ENV_FILE}" ]] || die "secrets file is missing, unreadable, or a symlink"
+[[ "$(stat -c '%U:%G' "${ENV_FILE}")" == "root:root" ]] || die "secrets file must be owned by root:root"
+[[ "$(stat -c '%a' "${ENV_FILE}")" =~ ^[46]00$ ]] || die "secrets file mode must be 0400 or 0600"
+[[ -f "${SHARED_CODEX}" && ! -L "${SHARED_CODEX}" && -x "${SHARED_CODEX}" ]] || die "shared Codex CLI is missing, non-executable, or a symlink"
+[[ "$(stat -c '%U:%G' "${SHARED_CODEX}")" == "root:root" ]] || die "shared Codex CLI must be owned by root:root"
+not_group_or_world_writable "${SHARED_CODEX}" || die "shared Codex CLI must not be group- or world-writable"
+[[ -f "${POLICY_CHECKER}" && ! -L "${POLICY_CHECKER}" && -x "${POLICY_CHECKER}" ]] || die "systemd policy checker is missing or invalid"
+[[ "$(stat -c '%U:%G' "${POLICY_CHECKER}")" == "root:root" ]] || die "systemd policy checker must be owned by root:root"
+not_group_or_world_writable "${POLICY_CHECKER}" || die "systemd policy checker must not be group- or world-writable"
+
+install -d -o root -g root -m 0755 "${APP_ROOT}" "${RELEASES_DIR}" "${SHARED_DIR}" "$(dirname "${SHARED_CODEX}")"
+
+is_release_path() {
+  local path="$1"
+  [[ -d "${path}" && ! -L "${path}" ]] || return 1
+  [[ "$(dirname "${path}")" == "${RELEASES_DIR}" ]] || return 1
+  [[ "$(basename "${path}")" =~ ^[0-9a-f]{40}$ ]]
+}
+
+validate_release() {
+  local release="$1"
+  is_release_path "${release}" || return 1
+  [[ "$(stat -c '%U:%G' "${release}")" == "root:root" ]] || return 1
+  [[ -f "${release}/.release-sha" ]] || return 1
+  [[ "$(<"${release}/.release-sha")" == "$(basename "${release}")" ]] || return 1
+  [[ -f "${release}/bot.py" && -f "${release}/requirements.lock" ]] || return 1
+  [[ -x "${release}/.venv/bin/python" ]] || return 1
+  local unit
+  for unit in "${UNITS[@]}"; do
+    [[ -f "${release}/${unit}" && ! -L "${release}/${unit}" ]] || return 1
+  done
+  "${POLICY_CHECKER}" "${release}"
+}
+
+install_units_from() {
+  local release="$1"
+  local unit
+  for unit in "${UNITS[@]}"; do
+    install -o root -g root -m 0644 "${release}/${unit}" "${UNIT_DIR}/.${unit}.$$" || return 1
+  done
+  for unit in "${UNITS[@]}"; do
+    mv -Tf "${UNIT_DIR}/.${unit}.$$" "${UNIT_DIR}/${unit}" || return 1
+  done
+  systemctl daemon-reload || return 1
+}
+
+runtime_health_check() {
+  local release="$1"
+  local phase="$2"
+  systemd-run --quiet --wait --pipe --collect \
+    --unit="codex-limit-bot-health-${phase}-$$" \
+    --service-type=exec \
+    --property="User=${RUNTIME_USER}" \
+    --property="Group=${RUNTIME_GROUP}" \
+    --property="WorkingDirectory=${release}" \
+    --property="Environment=HOME=${STATE_DIR}" \
+    --property="Environment=CODEX_HOME=${STATE_DIR}/.codex" \
+    --property="EnvironmentFile=${ENV_FILE}" \
+    --property=NoNewPrivileges=yes \
+    --property=PrivateTmp=yes \
+    --property=ProtectSystem=strict \
+    --property=ProtectHome=yes \
+    --property="ReadWritePaths=${STATE_DIR}" \
+    "${release}/.venv/bin/python" "${release}/bot.py" \
+    --codex "${SHARED_CODEX}" --health-check
+}
+
+reject_unit_dropins() {
+  local unit directory
+  for unit in "${UNITS[@]}"; do
+    for directory in \
+      "/etc/systemd/system/${unit}.d" \
+      "/run/systemd/system/${unit}.d" \
+      "/usr/local/lib/systemd/system/${unit}.d" \
+      "/usr/lib/systemd/system/${unit}.d" \
+      "/lib/systemd/system/${unit}.d"; do
+      if [[ -d "${directory}" ]] &&
+         [[ -n "$(find "${directory}" -maxdepth 1 -type f -name '*.conf' -print -quit)" ]]; then
+        die "unexpected systemd drop-in for ${unit}: ${directory}"
+      fi
+    done
+  done
+}
+
+reject_unit_dropins
+
+if [[ ! -d "${REPO_DIR}" ]]; then
+  log "Creating local repository mirror"
+  git clone --bare "${REPO_URL}" "${REPO_DIR}"
+fi
+[[ -f "${REPO_DIR}/HEAD" ]] || die "repository mirror is invalid"
+[[ ! -L "${REPO_DIR}" && "$(stat -c '%U:%G' "${REPO_DIR}")" == "root:root" ]] || die "repository mirror must be a root-owned directory"
+not_group_or_world_writable "${REPO_DIR}" || die "repository mirror must not be group- or world-writable"
+[[ "$(git -C "${REPO_DIR}" remote get-url origin)" == "${REPO_URL}" ]] || die "repository mirror has an unexpected origin"
+
+git -C "${REPO_DIR}" fetch --prune --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+MAIN_SHA="$(git -C "${REPO_DIR}" rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+readonly MAIN_SHA
+[[ "${MAIN_SHA}" == "${REQUESTED_SHA}" ]] || die "requested SHA is not the current origin/main"
+git -C "${REPO_DIR}" cat-file -e "${REQUESTED_SHA}^{commit}" || die "requested commit is unavailable"
+
+[[ -L "${CURRENT_LINK}" ]] || die "current must already be a symlink before automated deployment"
+OLD_RELEASE="$(readlink -f "${CURRENT_LINK}")"
+readonly OLD_RELEASE
+validate_release "${OLD_RELEASE}" || die "current target is not a valid managed release: ${OLD_RELEASE}"
+
+readonly FINAL_RELEASE="${RELEASES_DIR}/${REQUESTED_SHA}"
+readonly TEMP_RELEASE="${RELEASES_DIR}/.tmp-${REQUESTED_SHA}-$$"
+readonly TEMP_LINK="${APP_ROOT}/.current-${REQUESTED_SHA}-$$"
+readonly ROLLBACK_LINK="${APP_ROOT}/.rollback-${REQUESTED_SHA}-$$"
+ROLLBACK_NEEDED=0
+
+rollback() {
+  local status="$1"
+  local rollback_failed=0
+  trap - ERR INT TERM EXIT
+  set +e
+  if [[ "${ROLLBACK_NEEDED}" -eq 1 ]]; then
+    log "Deployment failed; restoring $(basename "${OLD_RELEASE}")"
+    systemctl stop codex-limit-bot.timer codex-limit-bot-listener.service codex-limit-bot.service >/dev/null 2>&1 || rollback_failed=1
+    rm -f -- "${ROLLBACK_LINK}"
+    if ln -s "${OLD_RELEASE}" "${ROLLBACK_LINK}" &&
+       mv -Tf "${ROLLBACK_LINK}" "${CURRENT_LINK}" &&
+       install_units_from "${OLD_RELEASE}"; then
+      systemctl disable codex-limit-bot.service >/dev/null 2>&1 || rollback_failed=1
+      systemctl enable codex-limit-bot-listener.service codex-limit-bot.timer >/dev/null 2>&1 || rollback_failed=1
+      systemctl reset-failed codex-limit-bot-listener.service || rollback_failed=1
+      systemctl start codex-limit-bot-listener.service || true
+      systemctl start codex-limit-bot.service || true
+      systemctl start codex-limit-bot.timer || true
+      sleep 10
+      if [[ "$(readlink -f "${CURRENT_LINK}")" != "${OLD_RELEASE}" ]] ||
+         ! systemctl is-active --quiet codex-limit-bot-listener.service ||
+         ! systemctl is-active --quiet codex-limit-bot.timer ||
+         [[ "$(systemctl is-enabled codex-limit-bot.service 2>/dev/null)" != "disabled" ]] ||
+         [[ "$(systemctl show -p NRestarts --value codex-limit-bot-listener.service)" != "0" ]] ||
+         [[ "$(systemctl show -p Result --value codex-limit-bot.service)" != "success" ]] ||
+         ! runtime_health_check "${OLD_RELEASE}" rollback; then
+        log "WARNING: rollback completed with a failed health check; inspect systemd"
+        rollback_failed=1
+      fi
+    else
+      log "WARNING: failed to restore the previous symlink or unit files"
+      rollback_failed=1
+    fi
+  fi
+  rm -rf -- "${TEMP_RELEASE}" "${TEMP_LINK}" "${ROLLBACK_LINK}"
+  if [[ "${rollback_failed}" -ne 0 ]]; then
+    log "WARNING: automatic rollback was incomplete; manual recovery is required"
+  fi
+  exit "${status}"
+}
+trap 'rollback $?' ERR INT TERM EXIT
+
+if [[ ! -e "${FINAL_RELEASE}" ]]; then
+  log "Building release ${REQUESTED_SHA}"
+  install -d -o root -g root -m 0755 "${TEMP_RELEASE}"
+  git -C "${REPO_DIR}" archive "${REQUESTED_SHA}" -- \
+    bot.py requirements.lock VERSION \
+    codex-limit-bot.service \
+    codex-limit-bot-listener.service \
+    codex-limit-bot.timer |
+    tar -x -C "${TEMP_RELEASE}"
+
+  for critical in bot.py requirements.lock codex-limit-bot.service codex-limit-bot-listener.service codex-limit-bot.timer; do
+    [[ -f "${TEMP_RELEASE}/${critical}" && ! -L "${TEMP_RELEASE}/${critical}" ]] || die "release contains an invalid critical path: ${critical}"
+  done
+  "${POLICY_CHECKER}" "${TEMP_RELEASE}" || die "release units violate the approved policy"
+
+  python3 -m venv "${TEMP_RELEASE}/.venv"
+  "${TEMP_RELEASE}/.venv/bin/python" -m pip install --disable-pip-version-check --require-hashes -r "${TEMP_RELEASE}/requirements.lock"
+  printf '%s\n' "${REQUESTED_SHA}" >"${TEMP_RELEASE}/.release-sha"
+  chown -R root:root "${TEMP_RELEASE}"
+  mv -T "${TEMP_RELEASE}" "${FINAL_RELEASE}"
+fi
+
+validate_release "${FINAL_RELEASE}" || die "target release is incomplete or invalid"
+systemd-analyze verify \
+  "${FINAL_RELEASE}/codex-limit-bot.service" \
+  "${FINAL_RELEASE}/codex-limit-bot-listener.service" \
+  "${FINAL_RELEASE}/codex-limit-bot.timer"
+
+log "Running pre-deployment application check"
+runtime_health_check "${FINAL_RELEASE}" pre
+
+log "Rechecking origin/main immediately before activation"
+git -C "${REPO_DIR}" fetch --prune --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+SECOND_MAIN_SHA="$(git -C "${REPO_DIR}" rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+[[ "${SECOND_MAIN_SHA}" == "${REQUESTED_SHA}" ]] || die "origin/main changed while the release was being built"
+
+ROLLBACK_NEEDED=1
+install_units_from "${FINAL_RELEASE}"
+systemctl stop codex-limit-bot.timer codex-limit-bot-listener.service codex-limit-bot.service
+systemctl disable codex-limit-bot.service >/dev/null 2>&1
+systemctl reset-failed codex-limit-bot-listener.service
+
+ln -s "${FINAL_RELEASE}" "${TEMP_LINK}"
+mv -Tf "${TEMP_LINK}" "${CURRENT_LINK}"
+
+systemctl enable codex-limit-bot-listener.service codex-limit-bot.timer >/dev/null
+systemctl start codex-limit-bot-listener.service
+systemctl start codex-limit-bot.service
+systemctl start codex-limit-bot.timer
+
+sleep 10
+
+[[ "$(readlink -f "${CURRENT_LINK}")" == "${FINAL_RELEASE}" ]] || die "active symlink does not point to the requested release"
+systemctl is-active --quiet codex-limit-bot-listener.service || die "listener service is not active"
+systemctl is-enabled --quiet codex-limit-bot-listener.service || die "listener service is not enabled"
+systemctl is-active --quiet codex-limit-bot.timer || die "timer is not active"
+systemctl is-enabled --quiet codex-limit-bot.timer || die "timer is not enabled"
+[[ "$(systemctl is-enabled codex-limit-bot.service 2>/dev/null)" == "disabled" ]] || die "one-shot service must not be enabled directly"
+[[ "$(systemctl show -p NRestarts --value codex-limit-bot-listener.service)" == "0" ]] || die "listener restarted during the stability check"
+[[ "$(systemctl show -p Result --value codex-limit-bot.service)" == "success" ]] || die "one-shot health check failed"
+runtime_health_check "${FINAL_RELEASE}" post
+
+ROLLBACK_NEEDED=0
+trap - ERR INT TERM EXIT
+
+declare -A protected=()
+protected["${FINAL_RELEASE}"]=1
+protected["${OLD_RELEASE}"]=1
+kept="${#protected[@]}"
+
+while IFS= read -r release; do
+  [[ "${kept}" -ge "${KEEP_RELEASES}" ]] && break
+  [[ -n "${protected[${release}]+x}" ]] && continue
+  protected["${release}"]=1
+  kept=$((kept + 1))
+done < <(
+  find "${RELEASES_DIR}" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended \
+    -regex '.*/[0-9a-f]{40}' -printf '%T@ %p\n' |
+    sort -rn |
+    sed 's/^[^ ]* //'
+)
+
+while IFS= read -r release; do
+  [[ -n "${protected[${release}]+x}" ]] && continue
+  log "Removing old release $(basename "${release}")"
+  rm -rf --one-file-system -- "${release}"
+done < <(
+  find "${RELEASES_DIR}" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended \
+    -regex '.*/[0-9a-f]{40}' -print
+)
+
+log "Deployment complete: ${REQUESTED_SHA}"

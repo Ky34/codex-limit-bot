@@ -1,9 +1,11 @@
 import json
+import os
+import sys
 import unittest
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import bot
 
@@ -117,6 +119,54 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertIn("🔴 <b>Пятичасовой лимит: порог 5% пройден!</b>", events[0][0])
         self.assertIn("Осталось: <b>4%</b>", events[0][0])
+
+
+class HealthCheckTests(unittest.TestCase):
+    @patch("bot.telegram_request")
+    @patch("bot.read_rate_limits")
+    def test_health_check_validates_telegram_and_codex_without_sending(self, read_limits, telegram):
+        telegram.side_effect = [
+            {"result": {"id": 123, "is_bot": True}},
+            {"result": {"id": -456, "type": "private"}},
+        ]
+        read_limits.return_value = {
+            "rateLimits": {
+                "primary": {"usedPercent": 25, "resetsAt": 2000, "windowDurationMins": 300},
+                "secondary": {"usedPercent": 40, "resetsAt": 9000, "windowDurationMins": 10080},
+            }
+        }
+        with patch.object(sys, "argv", ["bot.py", "--health-check", "--codex", "codex"]), \
+             patch.dict(os.environ, {
+                 "TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "-456",
+             }, clear=True):
+            self.assertEqual(bot.main(), 0)
+        self.assertEqual(telegram.call_args_list, [
+            call("token", "getMe", {}),
+            call("token", "getChat", {"chat_id": "-456"}),
+        ])
+        read_limits.assert_called_once_with("codex")
+
+    @patch("bot.telegram_request", return_value={"result": {"id": 123, "is_bot": False}})
+    def test_health_check_rejects_non_bot_identity(self, telegram):
+        with patch.object(sys, "argv", ["bot.py", "--health-check"]), \
+             patch.dict(os.environ, {
+                 "TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "-456",
+             }, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "invalid bot identity"):
+                bot.main()
+
+    @patch("bot.telegram_request")
+    def test_health_check_rejects_unexpected_chat(self, telegram):
+        telegram.side_effect = [
+            {"result": {"id": 123, "is_bot": True}},
+            {"result": {"id": -999, "type": "private"}},
+        ]
+        with patch.object(sys, "argv", ["bot.py", "--health-check"]), \
+             patch.dict(os.environ, {
+                 "TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "-456",
+             }, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "unexpected chat"):
+                bot.main()
 
 
 class CommandTests(unittest.TestCase):

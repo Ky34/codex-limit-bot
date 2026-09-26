@@ -21,10 +21,10 @@ Telegram-бот [@Ky3aLimitsbot](https://t.me/Ky3aLimitsbot) отслежива�
 
 ## Разработка и проверка
 
-Нужен Python 3.11+. Зависимости — в [requirements.txt](requirements.txt); локальная установка, команды для Windows/macOS и тесты — в [инструкции разработчика](docs/DEVELOPMENT.md). Рабочие правила — в [AGENTS.md](AGENTS.md), контекст для продолжения работы — в [PROJECT_STATE.md](PROJECT_STATE.md).
+Нужен Python 3.12+. Зависимости — в [requirements.txt](requirements.txt); локальная установка, команды для Windows/macOS и тесты — в [инструкции разработчика](docs/DEVELOPMENT.md). Рабочие правила — в [AGENTS.md](AGENTS.md), контекст для продолжения работы — в [PROJECT_STATE.md](PROJECT_STATE.md).
 
 ## Размещение и версии
 
 Активный бот размещён на собственном VPS пользователя; рабочая точка доступа для обслуживания — `ssh my-vps`. Проверку лимитов запускает `codex-limit-bot.timer`, команды Telegram обрабатывает `codex-limit-bot-listener.service`. Подтверждённые компоненты прежнего экземпляра удалены со старого VPS. Секреты и рабочие файлы состояния не входят в репозиторий.
 
-Согласованная и развёрнутая версия — **[v1.1.1](https://github.com/Ky34/codex-limit-bot/releases/tag/v1.1.1)**. Пока автодеплой не настроен, обновление GitHub само по себе **не обновляет production VPS**. Следующий этап — автоматический деплой того же проверенного commit после разрешённой публикации в `main`; до этого ручное развёртывание выполняется отдельно после согласования. История — в [CHANGELOG.md](CHANGELOG.md), текущий номер — в [VERSION](VERSION). Локальное размещение проекта описано в [LOCAL-LAYOUT.md](LOCAL-LAYOUT.md).
+Согласованная и развёрнутая версия — **[v1.1.1](https://github.com/Ky34/codex-limit-bot/releases/tag/v1.1.1)**. Автодеплой [подготовлен](docs/DEPLOYMENT.md), но остаётся выключенным: обновление GitHub само по себе **не обновляет production VPS**. История — в [CHANGELOG.md](CHANGELOG.md), текущий номер — в [VERSION](VERSION). Локальное размещение проекта описано в [LOCAL-LAYOUT.md](LOCAL-LAYOUT.md).

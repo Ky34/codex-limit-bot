@@ -419,6 +419,7 @@ def main() -> int:
     parser.add_argument("--state", type=Path, default=Path("/var/lib/codex-limit-bot/state.json"))
     parser.add_argument("--codex", default="/root/.local/bin/codex")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--health-check", action="store_true")
     parser.add_argument("--discover-chat", action="store_true")
     parser.add_argument("--listen", action="store_true")
     parser.add_argument("--offset", type=Path, default=Path("/var/lib/codex-limit-bot/updates.json"))
@@ -430,6 +431,20 @@ def main() -> int:
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if args.health_check:
+        if not token or not chat_id:
+            parser.error("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
+        me = telegram_request(token, "getMe", {})["result"]
+        if not isinstance(me, dict) or not me.get("id") or me.get("is_bot") is not True:
+            raise RuntimeError("Telegram getMe returned an invalid bot identity")
+        chat = telegram_request(token, "getChat", {"chat_id": chat_id})["result"]
+        if not isinstance(chat, dict) or str(chat.get("id")) != str(chat_id):
+            raise RuntimeError("Telegram getChat returned an unexpected chat")
+        windows = codex_windows(read_rate_limits(args.codex))
+        if not windows:
+            raise RuntimeError("Codex returned no supported rate-limit windows")
+        print("codex-limit-bot health check passed")
+        return 0
     if args.discover_chat:
         if not token:
             parser.error("TELEGRAM_BOT_TOKEN is required")

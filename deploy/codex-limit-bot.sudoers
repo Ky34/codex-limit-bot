@@ -1,0 +1,3 @@
+# Managed for the restricted codex-limit-bot deployment account.
+Defaults:codexdeploy secure_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+codexdeploy ALL=(root) NOPASSWD: /usr/local/sbin/deploy-codex-limit-bot

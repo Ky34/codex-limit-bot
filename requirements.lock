@@ -1,0 +1,6 @@
+# Production lock for CPython 3.12 on Linux x86_64 (manylinux2014-compatible).
+# Regenerate deliberately when requirements.txt changes.
+tzfpy==1.2.0 \
+    --hash=sha256:44b5ec963b14b873fd326ffe9ffbcdeb7cc5afdf8e3c71e50e52ed8edc6d3cee
+tzdata==2026.4 \
+    --hash=sha256:c2169a8b0a7a5e9674da5a135ccdfb2b3e671b333ed9fed17b41f73c34476e81

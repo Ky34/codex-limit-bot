@@ -2,7 +2,7 @@
 
 ## Статус
 
-Автоматический production deploy подготовлен, но выключен. Job `deploy-production` запускается только после успешного `push` в `main` и только при repository variable `PRODUCTION_DEPLOY_ENABLED=true`. До отдельного разрешения эту переменную не создавать и не включать.
+Автоматический production deploy настроен и включён через repository variable `PRODUCTION_DEPLOY_ENABLED=true`, но его первый полный запуск ещё не проверен. Job `deploy-production` запускается только после успешного `push` в `main`.
 
 Workflow передаёт полный 40-символьный SHA. Сервер заново получает `origin/main` и отказывает, если переданный SHA больше не является текущей вершиной ветки.
 

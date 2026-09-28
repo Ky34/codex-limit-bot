@@ -465,16 +465,26 @@ def main() -> int:
         response = read_rate_limits(args.codex)
         windows = codex_windows(response)
     except Exception:
-        if not args.dry_run and not state.get("_error_sent"):
-            send_automatic_message(
-                token, chat_id,
-                "⚠️ Мониторинг лимитов Codex временно не получает данные. Проверю снова через минуту.",
-            )
-            state["_error_sent"] = True
+        if not args.dry_run:
+            error_count = state.get("_error_count", 0)
+            if type(error_count) is not int or error_count < 0:
+                error_count = 0
+            error_count = max(error_count + 1, 2) if state.get("_error_sent") else error_count + 1
+            state["_error_count"] = error_count
+            if error_count >= 2 and not state.get("_error_sent"):
+                send_automatic_message(
+                    token, chat_id,
+                    "⚠️ Мониторинг лимитов Codex временно не получает данные. Проверю снова через минуту.",
+                )
+                state["_error_sent"] = True
             save_state(args.state, state)
         raise
-    if state.pop("_error_sent", False) and not args.dry_run:
+    had_error_state = "_error_sent" in state or "_error_count" in state
+    error_sent = bool(state.pop("_error_sent", False))
+    state.pop("_error_count", None)
+    if not args.dry_run and error_sent:
         send_automatic_message(token, chat_id, "✅ Мониторинг лимитов Codex восстановлен.")
+    if not args.dry_run and had_error_state:
         save_state(args.state, state)
     pending, updated = notifications(windows, state)
     for message, snapshot in pending:

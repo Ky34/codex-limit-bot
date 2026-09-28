@@ -5,7 +5,7 @@ import unittest
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import bot
 
@@ -167,6 +167,111 @@ class HealthCheckTests(unittest.TestCase):
              }, clear=True):
             with self.assertRaisesRegex(RuntimeError, "unexpected chat"):
                 bot.main()
+
+
+class AvailabilityAlertTests(unittest.TestCase):
+    response = {
+        "rateLimits": {
+            "primary": {"usedPercent": 50, "resetsAt": 2000, "windowDurationMins": 300},
+            "secondary": {"usedPercent": 40, "resetsAt": 9000, "windowDurationMins": 10080},
+        }
+    }
+
+    def run_monitor(self, state_path, read_limits, sender, expect_error=False):
+        with patch.object(sys, "argv", ["bot.py", "--state", str(state_path), "--codex", "codex"]), \
+             patch.dict(os.environ, {
+                 "TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "123",
+             }, clear=True), \
+             patch("bot.read_rate_limits", read_limits), \
+             patch("bot.send_automatic_message", sender):
+            if expect_error:
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    bot.main()
+            else:
+                self.assertEqual(bot.main(), 0)
+
+    def test_one_error_does_not_send_alert(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            sender = Mock()
+            self.run_monitor(state_path, Mock(side_effect=RuntimeError("unavailable")), sender, True)
+            sender.assert_not_called()
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["_error_count"], 1)
+
+    def test_one_error_then_success_sends_nothing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            sender = Mock()
+            self.run_monitor(state_path, Mock(side_effect=RuntimeError("unavailable")), sender, True)
+            self.run_monitor(state_path, Mock(return_value=self.response), sender)
+            sender.assert_not_called()
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertNotIn("_error_count", state)
+            self.assertNotIn("_error_sent", state)
+
+    def test_two_errors_send_one_warning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            sender = Mock()
+            failure = Mock(side_effect=RuntimeError("unavailable"))
+            self.run_monitor(state_path, failure, sender, True)
+            self.run_monitor(state_path, failure, sender, True)
+            sender.assert_called_once()
+            self.assertIn("временно не получает данные", sender.call_args.args[2])
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["_error_count"], 2)
+            self.assertTrue(state["_error_sent"])
+
+    def test_three_errors_still_send_one_warning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            sender = Mock()
+            failure = Mock(side_effect=RuntimeError("unavailable"))
+            for _ in range(3):
+                self.run_monitor(state_path, failure, sender, True)
+            sender.assert_called_once()
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["_error_count"], 3)
+
+    def test_two_errors_then_success_send_warning_and_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            sender = Mock()
+            failure = Mock(side_effect=RuntimeError("unavailable"))
+            self.run_monitor(state_path, failure, sender, True)
+            self.run_monitor(state_path, failure, sender, True)
+            self.run_monitor(state_path, Mock(return_value=self.response), sender)
+            self.assertEqual(sender.call_count, 2)
+            self.assertIn("временно не получает данные", sender.call_args_list[0].args[2])
+            self.assertEqual(sender.call_args_list[1].args[2], "✅ Мониторинг лимитов Codex восстановлен.")
+
+    def test_recovery_clears_state_for_a_new_single_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            sender = Mock()
+            failure = Mock(side_effect=RuntimeError("unavailable"))
+            self.run_monitor(state_path, failure, sender, True)
+            self.run_monitor(state_path, failure, sender, True)
+            self.run_monitor(state_path, Mock(return_value=self.response), sender)
+            self.run_monitor(state_path, failure, sender, True)
+            self.assertEqual(sender.call_count, 2)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["_error_count"], 1)
+            self.assertNotIn("_error_sent", state)
+
+    def test_legacy_error_sent_state_recovers_without_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "state.json"
+            state_path.write_text(json.dumps({"_error_sent": True, "legacy": "kept"}), encoding="utf-8")
+            sender = Mock()
+            self.run_monitor(state_path, Mock(side_effect=RuntimeError("unavailable")), sender, True)
+            sender.assert_not_called()
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["_error_count"], 2)
+            self.run_monitor(state_path, Mock(return_value=self.response), sender)
+            sender.assert_called_once_with("token", "123", "✅ Мониторинг лимитов Codex восстановлен.")
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertNotIn("_error_count", state)
+            self.assertNotIn("_error_sent", state)
+            self.assertEqual(state["legacy"], "kept")
 
 
 class CommandTests(unittest.TestCase):

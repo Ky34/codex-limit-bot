@@ -1,4 +1,3 @@
-import io
 import json
 import os
 import sys
@@ -16,64 +15,6 @@ def windows(five_hour_remaining=50, weekly_remaining=60, five_hour_reset=2000, w
         300: {"usedPercent": 100 - five_hour_remaining, "resetsAt": five_hour_reset},
         10080: {"usedPercent": 100 - weekly_remaining, "resetsAt": weekly_reset},
     }
-
-
-class BorderQueueTests(unittest.TestCase):
-    def test_live_response_uses_car_live_queue_length(self):
-        response = io.BytesIO(json.dumps({"carLiveQueue": [{}, {}], "busLiveQueue": [{}]}).encode())
-        with patch("bot.urllib.request.urlopen", return_value=response) as opener:
-            self.assertEqual(bot.read_border_car_count(), 2)
-        self.assertEqual(opener.call_args.kwargs["timeout"], 10)
-
-    def test_missing_car_queue_does_not_count_other_queues(self):
-        response = io.BytesIO(json.dumps({"busLiveQueue": [{}]}).encode())
-        with patch("bot.urllib.request.urlopen", return_value=response):
-            with self.assertRaisesRegex(ValueError, "carLiveQueue"):
-                bot.read_border_car_count()
-
-    def test_each_threshold_alerts_once_and_checks_every_fourteen_minutes(self):
-        with tempfile.TemporaryDirectory() as temp:
-            state_path = Path(temp) / "border-state.json"
-            with patch("bot.read_border_car_count", side_effect=[150, 151, 201, 251, 40, 251]) as reader, \
-                 patch("bot.send_automatic_message") as sender:
-                bot.check_border_queue("token", "123", state_path, now=0)
-                bot.check_border_queue("token", "123", state_path, now=839)
-                self.assertEqual(reader.call_count, 1)
-                for now in (840, 1680, 2520, 3360, 4200):
-                    bot.check_border_queue("token", "123", state_path, now=now)
-            self.assertEqual(reader.call_count, 6)
-            self.assertEqual(sender.call_count, 3)
-            for threshold, call_args in zip(bot.BORDER_THRESHOLDS, sender.call_args_list):
-                self.assertIn(str(threshold), call_args.args[2])
-            self.assertEqual(
-                json.loads(state_path.read_text(encoding="utf-8"))["alerted_thresholds"],
-                [150, 200, 250],
-            )
-
-    def test_first_read_above_all_thresholds_sends_each_once(self):
-        with tempfile.TemporaryDirectory() as temp:
-            state_path = Path(temp) / "border-state.json"
-            with patch("bot.read_border_car_count", return_value=260), \
-                 patch("bot.send_automatic_message") as sender:
-                bot.check_border_queue("token", "123", state_path, now=0)
-                bot.check_border_queue("token", "123", state_path, now=840)
-            self.assertEqual(sender.call_count, 3)
-
-    def test_border_failure_does_not_block_codex_monitor(self):
-        response = {
-            "rateLimits": {
-                "primary": {"usedPercent": 50, "resetsAt": 2000, "windowDurationMins": 300},
-                "secondary": {"usedPercent": 40, "resetsAt": 9000, "windowDurationMins": 10080},
-            }
-        }
-        with tempfile.TemporaryDirectory() as temp:
-            with patch.object(sys, "argv", ["bot.py", "--state", str(Path(temp) / "state.json")]), \
-                 patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "123"}), \
-                 patch("bot.check_border_queue", side_effect=TimeoutError("border timeout")), \
-                 patch("bot.read_rate_limits", return_value=response) as read_limits, \
-                 patch("bot.send_automatic_message"):
-                self.assertEqual(bot.main(), 0)
-                read_limits.assert_called_once()
 
 
 class NotificationTests(unittest.TestCase):
@@ -242,7 +183,6 @@ class AvailabilityAlertTests(unittest.TestCase):
                  "TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "123",
              }, clear=True), \
              patch("bot.read_rate_limits", read_limits), \
-             patch("bot.check_border_queue"), \
              patch("bot.send_automatic_message", sender):
             if expect_error:
                 with self.assertRaisesRegex(RuntimeError, "unavailable"):

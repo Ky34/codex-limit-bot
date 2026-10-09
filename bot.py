@@ -33,14 +33,6 @@ QUIET_START_HOUR = 2
 QUIET_END_HOUR = 10
 TIMEZONE_STATE = Path("/var/lib/codex-limit-bot/timezone.json")
 STATUS_BUTTON = "📊 Лимиты"
-BORDER_QUEUE_URL = (
-    "https://belarusborder.by/info/monitoring-new?token=test"
-    "&checkpointId=a9173a85-3fc0-424c-84f0-defa632481e4"
-)
-BORDER_STATE = Path("/var/lib/codex-limit-bot/border-state.json")
-BORDER_CHECK_INTERVAL = 14 * 60
-BORDER_THRESHOLDS = (150, 200, 250)
-
 try:
     MINSK = ZoneInfo("Europe/Minsk")
 except ZoneInfoNotFoundError:
@@ -326,41 +318,6 @@ def save_state(path: Path, state: dict) -> None:
     tmp.replace(path)
 
 
-def read_border_car_count() -> int:
-    request = urllib.request.Request(BORDER_QUEUE_URL, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=10) as response:
-        queue = json.load(response).get("carLiveQueue")
-    if not isinstance(queue, list):
-        raise ValueError("Border response has no carLiveQueue array")
-    return len(queue)
-
-
-def check_border_queue(
-    token: str, chat_id: str, state_path: Path = BORDER_STATE, now: int | None = None
-) -> None:
-    now = int(time.time()) if now is None else now
-    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
-    next_check_at = state.get("next_check_at", 0)
-    if type(next_check_at) is int and now < next_check_at:
-        return
-
-    state["next_check_at"] = now + BORDER_CHECK_INTERVAL
-    save_state(state_path, state)
-    count = read_border_car_count()
-    alerted = state.get("alerted_thresholds", [])
-    if not isinstance(alerted, list):
-        alerted = []
-    for threshold in BORDER_THRESHOLDS:
-        if count > threshold and threshold not in alerted:
-            send_automatic_message(
-                token, chat_id,
-                f"🚗 Очередь легковых автомобилей превысила {threshold}: сейчас {count}.",
-            )
-            alerted.append(threshold)
-            state["alerted_thresholds"] = alerted
-            save_state(state_path, state)
-
-
 def bot_keyboard() -> str:
     return json.dumps({
         "keyboard": [
@@ -502,12 +459,6 @@ def main() -> int:
     if args.listen:
         listen_commands(token, chat_id, args.codex, args.status_command, args.offset, args.timezone_state)
         return 0
-
-    if not args.dry_run:
-        try:
-            check_border_queue(token, chat_id)
-        except Exception as exc:
-            print(f"codex-limit-bot border queue: {exc}", file=sys.stderr)
 
     state = json.loads(args.state.read_text(encoding="utf-8")) if args.state.exists() else {}
     try:

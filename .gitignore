@@ -5,7 +5,6 @@ IMG_4782.png
 *.env
 auth.json
 state.json
-border-state.json
 updates.json
 timezone.json
 .codex/

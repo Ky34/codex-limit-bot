@@ -29,8 +29,8 @@ MONTHS = (
 THRESHOLDS = (20, 10, 5)
 THRESHOLDS_VERSION = 2
 DIVIDER = "────────────────────"
-QUIET_START_HOUR = 2
-QUIET_END_HOUR = 10
+QUIET_START_HOUR = 21
+QUIET_END_HOUR = 9
 TIMEZONE_STATE = Path("/var/lib/codex-limit-bot/timezone.json")
 STATUS_BUTTON = "📊 Лимиты"
 try:
@@ -297,6 +297,8 @@ def local_zone(path: Path = TIMEZONE_STATE):
 
 def is_quiet_hours(now: datetime | None = None, timezone_state_path: Path = TIMEZONE_STATE) -> bool:
     local_time = (now or datetime.now(timezone.utc)).astimezone(local_zone(timezone_state_path))
+    if QUIET_START_HOUR > QUIET_END_HOUR:
+        return local_time.hour >= QUIET_START_HOUR or local_time.hour < QUIET_END_HOUR
     return QUIET_START_HOUR <= local_time.hour < QUIET_END_HOUR
 
 
@@ -359,7 +361,7 @@ def handle_update(
             "chat_id": chat_id,
             "text": (
                 f"📍 Часовой пояс: {zone_name}.\n"
-                "Тихие часы 02:00–10:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
+                "Тихие часы 21:00–09:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
             ),
             "reply_markup": bot_keyboard(),
         })
@@ -369,7 +371,7 @@ def handle_update(
     if command in ("/start", "/timezone"):
         telegram_request(token, "sendMessage", {
             "chat_id": chat_id,
-            "text": "Используйте кнопки «📊 Лимиты» для просмотра остатков и «📍 Обновить часовой пояс» для настройки тихих часов 02:00–10:00.",
+            "text": "Используйте кнопки «📊 Лимиты» для просмотра остатков и «📍 Обновить часовой пояс» для настройки тихих часов 21:00–09:00.",
             "reply_markup": bot_keyboard(),
         })
         return

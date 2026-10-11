@@ -353,6 +353,7 @@ class QuietHoursTests(unittest.TestCase):
             self.assertEqual(set(state), {"zone"})
             self.assertNotIn("latitude", path.read_text(encoding="utf-8"))
             self.assertIn("При следующем переезде нажмите кнопку", telegram.call_args.args[2]["text"])
+            self.assertIn("21:00–09:00", telegram.call_args.args[2]["text"])
             self.assertIn("reply_markup", telegram.call_args.args[2])
             self.assertTrue(bot.is_quiet_hours(
                 datetime(2026, 9, 20, 0, 30, tzinfo=timezone.utc), path,
@@ -360,7 +361,8 @@ class QuietHoursTests(unittest.TestCase):
 
     def test_quiet_hours_boundaries(self):
         for hour, minute, expected in (
-            (1, 59, False), (2, 0, True), (9, 59, True), (10, 0, False)
+            (20, 59, False), (21, 0, True), (23, 59, True),
+            (0, 0, True), (8, 59, True), (9, 0, False), (12, 0, False)
         ):
             with self.subTest(hour=hour, minute=minute):
                 now = datetime(2026, 9, 20, hour, minute, tzinfo=bot.MINSK)
@@ -383,8 +385,8 @@ class QuietHoursTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "timezone.json"
             bot.save_state(path, {"zone": "Europe/Berlin"})
-            summer = datetime(2026, 9, 20, 0, 30, tzinfo=timezone.utc)
-            winter = datetime(2026, 12, 20, 0, 30, tzinfo=timezone.utc)
+            summer = datetime(2026, 9, 20, 19, 30, tzinfo=timezone.utc)
+            winter = datetime(2026, 12, 20, 19, 30, tzinfo=timezone.utc)
             self.assertTrue(bot.is_quiet_hours(summer, path))
             self.assertFalse(bot.is_quiet_hours(winter, path))
             bot.save_state(path, {"zone": "Europe/Minsk"})

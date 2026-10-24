@@ -29,7 +29,7 @@ MONTHS = (
 THRESHOLDS = (20, 10, 5)
 THRESHOLDS_VERSION = 2
 DIVIDER = "────────────────────"
-QUIET_START_HOUR = 21
+QUIET_START_HOUR = 20
 QUIET_END_HOUR = 9
 TIMEZONE_STATE = Path("/var/lib/codex-limit-bot/timezone.json")
 STATUS_BUTTON = "📊 Лимиты"
@@ -361,7 +361,7 @@ def handle_update(
             "chat_id": chat_id,
             "text": (
                 f"📍 Часовой пояс: {zone_name}.\n"
-                "Тихие часы 21:00–09:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
+                "Тихие часы 20:00–09:00 будут действовать в этом часовом поясе. При следующем переезде нажмите кнопку ещё раз."
             ),
             "reply_markup": bot_keyboard(),
         })
@@ -371,7 +371,7 @@ def handle_update(
     if command in ("/start", "/timezone"):
         telegram_request(token, "sendMessage", {
             "chat_id": chat_id,
-            "text": "Используйте кнопки «📊 Лимиты» для просмотра остатков и «📍 Обновить часовой пояс» для настройки тихих часов 21:00–09:00.",
+            "text": "Используйте кнопки «📊 Лимиты» для просмотра остатков и «📍 Обновить часовой пояс» для настройки тихих часов 20:00–09:00.",
             "reply_markup": bot_keyboard(),
         })
         return
